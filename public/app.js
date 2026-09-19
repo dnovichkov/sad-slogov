@@ -142,6 +142,9 @@ function plan() {
     pool,
     card: pool,
     blend: pool,
+    reverse: pool.length
+      ? CURRICULUM.reverseSyllables(prefs.letters, prefs.vowels)
+      : [],
     picture: pool.filter(
       (s) => CURRICULUM.wordsFor(s, { startOnly }).length > 0,
     ),
@@ -171,6 +174,12 @@ const GAMES = [
       const s = p.pool[0] || "СА";
       return `${s[0]}→${s[1]}`;
     },
+  },
+  {
+    id: "reverse",
+    title: () => "Обратный слог",
+    hint: () => "Гласная впереди: МА — но АМ.",
+    icon: (p) => p.reverse[0] || "АМ",
   },
   {
     id: "picture",
@@ -345,6 +354,8 @@ function helpText(q) {
     return letter.hold
       ? `Взрослому: тяните «${letter.sound}» и переходите к гласному плавно, без паузы между звуками. ${letter.tip}`
       : `Взрослому: этот звук тянуть нельзя — произнесите слог одним движением, «${q.target.toLowerCase()}», а не «${letter.id.toLowerCase()}… ${q.target[1].toLowerCase()}». ${letter.tip}`;
+  if (q.type === "reverse")
+    return `Взрослому: обратный слог читается не так, как прямой: сначала тянем гласную, потом добавляем согласную. Сравните вслух «${(q.target[1] + q.target[0]).toLowerCase()}» и «${q.target.toLowerCase()}» — это разные слоги.`;
   if (q.type === "read")
     return "Взрослому: пусть ребёнок ведёт пальцем и читает слог за слогом, а не по буквам. Подскажите первый слог, если нужно, и не торопите.";
   if (q.type === "soft")
@@ -371,6 +382,9 @@ function renderLesson(focus = false) {
   if (q.type === "card") {
     const [consonant, vowel] = q.target;
     body = `<p class="exercise-kicker">Карточки слогов</p><h1 tabindex="-1">Прочитай слог</h1><p class="task-description">Не спеши. У нас всё получится.</p><button class="flash-card" data-action="hint" aria-label="Слог ${q.target}. Показать соединение звуков"><span class="big-syllable">${q.target}</span><small>Нажми, чтобы подружить звуки</small></button><div class="blend-hint" aria-live="polite">${session.hint ? `${consonant} <span aria-hidden="true">⟶</span> ${vowel} <span aria-hidden="true">·</span> ${q.target}` : ""}</div><p class="parent-caption">Взрослому: послушайте и отметьте, как получилось.</p>${adultMarks}`;
+  } else if (q.type === "reverse") {
+    const [vowel, consonant] = q.target;
+    body = `<p class="exercise-kicker">Обратный слог</p><h1 tabindex="-1">Прочитай слог</h1><p class="task-description">Здесь гласная впереди. Сначала потяни её, потом добавь согласную.</p><button class="flash-card" data-action="hint" aria-label="Слог ${q.target}. Показать порядок звуков"><span class="big-syllable">${q.target}</span><small>Нажми, чтобы увидеть порядок</small></button><div class="blend-hint" aria-live="polite">${session.hint ? `${vowel} <span aria-hidden="true">⟶</span> ${consonant} <span aria-hidden="true">·</span> ${q.target}` : ""}</div><p class="parent-caption">Взрослому: послушайте и отметьте, как получилось.</p>${adultMarks}`;
   } else if (q.type === "blend") {
     const [consonant, vowel] = q.target;
     body = `<p class="exercise-kicker">Подружи буквы</p><h1 tabindex="-1">Собери слог ${q.target}</h1><p class="task-description">${session.solved ? "Прочитай, как звуки подружились." : session.pickedConsonant ? "Теперь выбери гласную внизу." : `Сначала нажми на «${consonant}», затем на гласную.`}</p>${session.solved ? `<div class="blend-result">${q.target}</div>` : `<div class="blend-board"><button class="letter-source ${session.pickedConsonant ? "selected" : ""}" data-action="select-consonant" aria-label="Выбрать букву ${consonant}" aria-pressed="${session.pickedConsonant}">${consonant}</button><span class="blend-arrow" aria-hidden="true"></span><div class="letter-destination" aria-label="Место для гласной">?</div></div>`}<div class="choice-row">${q.options.map((s) => `<button class="choice ${session.solved && s === q.target ? "correct" : ""} ${session.lastWrong === s ? "retry" : ""}" data-action="vowel" data-value="${s}" aria-label="Гласная ${s[1]}" ${session.solved ? "disabled" : ""}>${s[1]}</button>`).join("")}</div>${feedback(q)}${session.hint && !session.solved ? `<div class="hint-box">Проведи пальчиком слева направо и прочитай вместе со взрослым: <strong>${consonant} → ${vowel} → ${q.target}</strong></div>` : ""}<div class="action-row">${session.solved ? next : '<button class="text-button" data-action="hint">Помоги мне</button>'}</div>`;
@@ -424,7 +438,8 @@ function answer(value, isVowel = false) {
 }
 
 /** Игры, где результат отмечает взрослый, а не проверяет интерфейс. */
-const adultJudged = (type) => type === "card" || type === "read";
+const adultJudged = (type) =>
+  ["card", "read", "reverse"].includes(type);
 
 function finishQuestion(help = false) {
   if (view !== "lesson") return;
@@ -458,9 +473,11 @@ function complete(partial = false) {
     history = history.slice(-20);
     save();
   }
-  const bySyllable = CURRICULUM.syllables.filter((s) =>
-    results.some((r) => r.target === s),
-  );
+  // Обратных слогов нет в общем списке курса, поэтому берём то,
+  // что реально встретилось в серии, в порядке появления.
+  const bySyllable = [
+    ...new Set(results.filter((r) => r.type !== "read").map((r) => r.target)),
+  ];
   const readWords = results.filter((r) => r.type === "read");
   view = "summary";
   main.innerHTML = `<section class="lesson"><div class="lesson-bar"><button class="back-button" data-action="home">← К играм</button><span class="step-count">${completed} из ${total} заданий</span></div><div class="exercise"><div class="summary-art">${ART.summary(completed)}</div><p class="exercise-kicker">${completed ? "Маленький шаг сделан" : "Занятие подождёт"}</p><h1 tabindex="-1">${completed ? "Твой сад растёт!" : "Отдохнём и вернёмся"}</h1><p class="summary-text">${completed ? "Здорово потрудились вместе. Теперь можно отдохнуть — можно вернуться в сад, когда захочется." : "Сегодня можно просто рассмотреть карточки вместе. Начнём, когда будет настроение."}</p><div class="action-row"><button class="primary small-primary" data-action="home">На сегодня всё <span aria-hidden="true">✓</span></button>${completed ? `<button class="secondary" data-action="start" data-mode="${mode}">Ещё одна серия</button>` : ""}</div>${

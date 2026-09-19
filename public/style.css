@@ -346,6 +346,10 @@ h1 {
   background: #f4efd9;
   color: #8a6128;
 }
+.game-card:nth-child(6) .mini-icon {
+  background: #eee6ee;
+  color: #6b4f6b;
+}
 .game-card h3 {
   font-size: 20px;
   margin-bottom: 8px;

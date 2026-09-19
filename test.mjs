@@ -231,6 +231,29 @@ function launch(storage = {}, { denyWrites = false } = {}) {
             continue;
           }
 
+          if (q.type === "reverse") {
+            ok(!q.options, `${where}: у обратного слога нет вариантов`);
+            // Гласная впереди, и только та, что бывает в обратном слоге:
+            // «эм» и «эс» — это названия букв, их называть нельзя.
+            ok(
+              "АУОЫИЕ".includes(q.target[0]),
+              `${where}: первая буква не годится для обратного слога`,
+            );
+            ok(
+              stage.vowels.includes(q.target[0]),
+              `${where}: гласная ещё не пройдена`,
+            );
+            ok(
+              stage.letters.includes(q.target[1]),
+              `${where}: согласная ещё не пройдена`,
+            );
+            ok(
+              CURRICULUM.letter(q.target[1])?.kind !== "sign",
+              `${where}: обратный слог не может кончаться знаком`,
+            );
+            continue;
+          }
+
           ok(pool.includes(q.target), `${where}: слог вне выбранного материала`);
 
           if (q.type === "card") {
@@ -321,6 +344,12 @@ function launch(storage = {}, { denyWrites = false } = {}) {
   ok(p.read.length, "есть что прочитать уже на первых буквах");
   equal(p.soft.length, 0, "без мягких гласных пары твёрдый/мягкий не бывает");
 
+  ok(p.reverse.length, "обратные слоги есть с первых букв");
+  ok(
+    p.reverse.every((s) => !p.pool.includes(s)),
+    "обратный слог не путается с прямым",
+  );
+
   const upToYo = app.CURRICULUM.upTo("Ё");
   app.settings({ letters: upToYo.letters, vowels: upToYo.vowels });
   p = app.plan();
@@ -329,6 +358,28 @@ function launch(storage = {}, { denyWrites = false } = {}) {
     p.soft.every((s) => app.CURRICULUM.softPair(s)),
     "у каждого слога пары есть партнёр",
   );
+  // Я, Ю и Ё в обратный слог не берутся, хотя в прямых они есть.
+  ok(
+    p.reverse.every((s) => !"ЯЮЁЭ".includes(s[0])),
+    "в обратном слоге нет Я, Ю, Ё и Э",
+  );
+}
+
+// --- 2б. Обратный слог: результат отмечает взрослый ---
+{
+  const app = launch();
+  app.settings({ letters: ["М", "С"], vowels: ["А", "У", "О"], length: "3" });
+  app.click("start", { mode: "reverse" });
+  const q = app.session.queue[0];
+  ok(app.html().includes("Обратный слог"), "заголовок игры показан");
+  ok(app.html().includes(`>${q.target}<`), "слог показан на карточке");
+  const compare = (q.target[1] + q.target[0]).toLowerCase();
+  ok(
+    app.html().includes(compare),
+    `подсказка предлагает сравнить с прямым слогом «${compare}»`,
+  );
+  app.click("card-done", { help: "no" });
+  equal(app.session.index, 1, "задание засчитано без выбора варианта");
 }
 
 // --- 3. Полная серия: всё самостоятельно ---

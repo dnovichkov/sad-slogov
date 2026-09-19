@@ -480,6 +480,8 @@ const CURRICULUM = (() => {
   const ACCENT = "́";
   // Безударные «О», «Е» и «Я» меняют звучание: [о]→[а], [е]/[я]→[и].
   const REDUCED = "ОЕЯ";
+  // Гласные, которые бывают первыми в обратном слоге: АМ, УС, ОХ, ЫЛ, ИМ, ЕЛ.
+  const REVERSE_VOWELS = "АУОЫИЕ";
 
   const byId = new Map(ALPHABET.map((l) => [l.id, l]));
   const vowelLetters = ALPHABET.filter((l) => l.kind === "vowel");
@@ -562,6 +564,23 @@ const CURRICULUM = (() => {
       if (startOnly) list = list.filter((w) => w.at[syllable] === 0);
       if (withArt) list = list.filter((w) => w.art);
       return list;
+    },
+
+    /**
+     * Обратные слоги: АМ, ОХ, УС. В букваре они идут сразу за прямыми —
+     * на контрасте видно, что МА и АМ читаются по-разному.
+     *
+     * Я, Ю и Ё сюда не берутся: после гласной они дали бы другой звук,
+     * и в букваре такого упражнения нет. Э не берётся тоже — «эм» и «эс»
+     * это названия букв, а называть буквы как раз нельзя.
+     */
+    reverseSyllables(letters, vowels) {
+      const head = [...REVERSE_VOWELS].filter((v) => vowels.includes(v));
+      const tail = letters.filter((id) => {
+        const letter = byId.get(id);
+        return letter && ["consonant", "semivowel"].includes(letter.kind);
+      });
+      return tail.flatMap((c) => head.map((v) => v + c));
     },
 
     /** Парный слог другого ряда: МА ↔ МЯ, ЛУ ↔ ЛЮ, СЫ ↔ СИ. */
