@@ -1,0 +1,26 @@
+# Публикация на своём сервере: https://sad-slogov.dmdp.ru/
+# Общие workflow живут в sites_configs; маршрут и запись на витрине — в его projects.toml.
+# Проверки отдельным шагом не нужны: npm run build выполняется внутри сборки образа.
+
+name: Публикация на сервере
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+jobs:
+  image:
+    name: Образ сайта
+    uses: dnovichkov/sites_configs/.github/workflows/build-image.yml@main
+    permissions:
+      contents: read
+      packages: write
+    with:
+      image: sad-slogov
+
+  deploy:
+    name: Деплой
+    needs: [image]
+    uses: dnovichkov/sites_configs/.github/workflows/deploy.yml@main
+    secrets: inherit

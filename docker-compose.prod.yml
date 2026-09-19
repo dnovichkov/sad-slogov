@@ -1,0 +1,27 @@
+# Production: образ собирает CI (.github/workflows/deploy.yml), а поднимает его deploy.sh
+# из sites_configs с IMAGE_TAG = sha коммита. Снаружи сайт доступен только через Caddy,
+# который ходит сюда по container_name в общей сети web, поэтому ports не публикуются.
+# Локальная проверка: docker compose -f docker-compose.prod.yml build
+
+# Имя проекта закреплено: от него зависят имена контейнеров и томов на сервере.
+name: sad-slogov
+
+services:
+  web:
+    image: ghcr.io/dnovichkov/sad-slogov:${IMAGE_TAG:-latest}
+    build: .
+    container_name: sad-slogov
+    restart: unless-stopped
+    healthcheck:
+      # busybox wget из nginx:alpine; 127.0.0.1 — nginx слушает только IPv4.
+      test: ["CMD-SHELL", "wget -q --spider http://127.0.0.1/healthz || exit 1"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 5s
+    networks:
+      - web
+
+networks:
+  web:
+    external: true
