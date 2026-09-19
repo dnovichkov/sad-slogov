@@ -109,9 +109,17 @@
     <script src="art.js"></script>
     <script>
       "use strict";
+      build();
+      function build() {
       const sheet = document.getElementById("sheet");
       const parts = [];
       const shown = new Set();
+
+      // ?page=0&size=21 — постранично, чтобы рисунки помещались на один экран
+      // и их было видно в нормальном масштабе. Без параметра — весь лист.
+      const query = new URLSearchParams(location.search);
+      const page = query.has("page") ? Number(query.get("page")) : null;
+      const size = Number(query.get("size")) || 21;
 
       const card = (w) => {
         const missing = w.art && !ART.has(w.art);
@@ -128,6 +136,30 @@
             : ART.word(w.art);
         return `<figure class="${missing ? "problem" : ""}">${body}<figcaption><b>${w.split}</b><span>${w.spoken}${w.art ? " · " + w.art : ""}</span>${tags}</figcaption></figure>`;
       };
+
+      // ?only=fox,horse — только названные рисунки, удобно после правки.
+      const only = (query.get("only") || "").split(",").filter(Boolean);
+      if (only.length) {
+        const picked = CURRICULUM.words.filter((w) => only.includes(w.art));
+        sheet.innerHTML =
+          `<h2>Выбрано рисунков: ${picked.length}</h2>` +
+          `<div class="grid">${picked.map(card).join("")}</div>`;
+        return;
+      }
+
+      if (page !== null) {
+        // Постраничный режим: только рисунки, подряд, без разбивки по буквам.
+        const drawn = CURRICULUM.words.filter((w) => w.art);
+        const total = Math.ceil(drawn.length / size);
+        const slice = drawn.slice(page * size, (page + 1) * size);
+        parts.push(
+          `<h2>Рисунки ${page * size + 1}–${page * size + slice.length} из ${drawn.length} · страница ${page + 1} из ${total}</h2>` +
+            `<div class="grid">${slice.map(card).join("")}</div>`,
+        );
+        sheet.innerHTML = parts.join("");
+        document.title = `Рисунки ${page + 1}/${total}`;
+        return;
+      }
 
       for (const letter of CURRICULUM.letters) {
         // Слово показываем у первой буквы, чьему слогу оно учит.
@@ -168,6 +200,7 @@
         );
 
       sheet.innerHTML = parts.join("");
+      }
     </script>
   </body>
 </html>
