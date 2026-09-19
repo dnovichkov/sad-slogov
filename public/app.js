@@ -6,26 +6,19 @@
  * Состояние: view (home | lesson | summary) и объект session.
  * При любом изменении главная область перерисовывается целиком —
  * поэтому фокус после перерисовки возвращается вручную.
+ *
+ * Материал задаётся двумя осями: согласные (и знаки) и гласные.
+ * Слог попадает в занятие, только если пройдены обе его буквы.
  */
 
-const STORE = "sad-slogov-v2";
-const LEGACY_STORE = "sad-slogov-v1";
+const STORE = "sad-slogov-v3";
 const LENGTHS = [3, 6, 9];
 const MAX_LENGTH = Math.max(...LENGTHS);
 /** Сколько карточек-вариантов показываем в игре «Где спрятался слог?». */
 const OPTION_COUNT = 3;
 
-/**
- * Настройки по умолчанию: буквы М и С — материал до страницы 16
- * «Букваря» Жуковой включительно, с которого начинался проект.
- * Х, Р и Ш взрослый включает, когда ребёнок до них дойдёт.
- */
-const initial = {
-  letters: ["М", "С"],
-  length: 6,
-  prompt: "picture",
-  position: "any",
-};
+/** Настройки по умолчанию: материал до страницы 16 букваря включительно. */
+const initial = { ...CURRICULUM.upTo("С"), length: 6, prompt: "picture", position: "any" };
 
 let storageAvailable = true,
   prefs = { ...initial },
@@ -33,20 +26,35 @@ let storageAvailable = true,
   session = null,
   view = "home";
 
-/** Читает сохранённое состояние, при необходимости перенося его с версии 1. */
+/**
+ * Читает сохранённое состояние, при необходимости перенося его
+ * с версий 1 и 2. В версии 1 хранились слоги одной буквы «С»,
+ * в версии 2 — список букв без отдельных гласных.
+ */
 function restore() {
-  const raw = localStorage.getItem(STORE);
-  if (raw) return JSON.parse(raw);
-  const legacy = localStorage.getItem(LEGACY_STORE);
-  if (!legacy) return null;
-  // В первой версии хранились слоги одной буквы «С». Буквы выводим из них,
-  // чтобы у тех, кто уже занимался, ничего не сбросилось.
-  const old = JSON.parse(legacy);
-  const letters = [
-    ...new Set((old?.prefs?.syllables || []).map((s) => s[0])),
-  ].filter((id) => CURRICULUM.letter(id));
+  const v3 = localStorage.getItem(STORE);
+  if (v3) return JSON.parse(v3);
+
+  const v2 = localStorage.getItem("sad-slogov-v2");
+  if (v2) {
+    const old = JSON.parse(v2);
+    // В версии 2 были только твёрдые слияния с А, У, О и Ы.
+    return {
+      prefs: { ...old?.prefs, vowels: ["А", "У", "О", "Ы"] },
+      history: old?.history,
+    };
+  }
+
+  const v1 = localStorage.getItem("sad-slogov-v1");
+  if (!v1) return null;
+  const old = JSON.parse(v1);
+  const letters = [...new Set((old?.prefs?.syllables || []).map((s) => s[0]))];
   return {
-    prefs: { ...old?.prefs, letters: letters.length ? letters : ["С"] },
+    prefs: {
+      ...old?.prefs,
+      letters: letters.length ? letters : ["С"],
+      vowels: ["А", "У", "О"],
+    },
     history: old?.history,
   };
 }
@@ -54,11 +62,17 @@ function restore() {
 try {
   const data = restore();
   if (data) {
-    const letters = CURRICULUM.letterIds.filter((id) =>
-      data.prefs?.letters?.includes(id),
+    // Списки всегда пересобираем из курса: в хранилище могли остаться
+    // буквы прежних версий или просто мусор.
+    const letters = CURRICULUM.alphabet
+      .filter((l) => l.kind !== "vowel" && data.prefs?.letters?.includes(l.id))
+      .map((l) => l.id);
+    const vowels = CURRICULUM.vowelIds.filter((id) =>
+      data.prefs?.vowels?.includes(id),
     );
     prefs = {
       letters: letters.length ? letters : [...initial.letters],
+      vowels: vowels.length ? vowels : [...initial.vowels],
       length: LENGTHS.includes(data.prefs?.length)
         ? data.prefs.length
         : initial.length,
@@ -107,9 +121,137 @@ function save() {
   }
 }
 
-/** Все слоги выбранных букв, в порядке букваря. */
-const lessonSyllables = () =>
-  prefs.letters.flatMap((id) => CURRICULUM.syllablesOf(id));
+/** Есть ли у слова готовый рисунок. Слово без рисунка показывается текстом. */
+const drawn = (word) => Boolean(word?.art) && ART.has(word.art);
+
+/**
+ * Что можно составить из выбранного материала.
+ * Списки считаются один раз на серию: по ним видно, какие игры доступны
+ * и какие слоги годятся для каждой.
+ */
+function plan() {
+  const pool = prefs.letters.flatMap((id) =>
+    CURRICULUM.syllablesOf(id, prefs.vowels),
+  );
+  const inPool = new Set(pool);
+  const startOnly = prefs.position === "start";
+  // В «Прочитай слово» годятся только слова из пройденных букв:
+  // иначе ребёнок упрётся в букву, которой ещё не знает.
+  const known = new Set([...prefs.letters, ...prefs.vowels]);
+  return {
+    pool,
+    card: pool,
+    blend: pool,
+    picture: pool.filter(
+      (s) => CURRICULUM.wordsFor(s, { startOnly }).length > 0,
+    ),
+    soft: pool.filter((s) => {
+      const pair = CURRICULUM.softPair(s);
+      return pair && inPool.has(pair);
+    }),
+    read: CURRICULUM.words.filter((w) =>
+      [...w.word].every((c) => known.has(c)),
+    ),
+  };
+}
+
+/** Описание игр. Порядок задаёт и главную страницу, и смешанную серию. */
+const GAMES = [
+  {
+    id: "card",
+    title: () => "Карточки слогов",
+    hint: () => "Смотрим, тянем звуки, читаем.",
+    icon: (p) => p.pool[0] || "СА",
+  },
+  {
+    id: "blend",
+    title: () => "Подружи буквы",
+    hint: () => "Соединяем согласную с гласной.",
+    icon: (p) => {
+      const s = p.pool[0] || "СА";
+      return `${s[0]}→${s[1]}`;
+    },
+  },
+  {
+    id: "picture",
+    title: () =>
+      prefs.position === "start" ? "Что в начале?" : "Где спрятался слог?",
+    hint: () =>
+      prefs.position === "start"
+        ? "Узнаём знакомый слог в начале слова."
+        : "Ищем знакомый слог внутри слова.",
+    icon: () =>
+      ART.svg(
+        '<path d="M7 18V7h25v22H7Z" fill="none" stroke="currentColor" stroke-width="2"/><circle cx="24" cy="12" r="3" fill="currentColor"/><path d="m8 25 8-10 8 10 5-5 4 6" fill="none" stroke="currentColor" stroke-width="2"/>',
+        "0 0 40 36",
+      ),
+  },
+  {
+    id: "read",
+    title: () => "Прочитай слово",
+    hint: () => "Целое слово, слог за слогом.",
+    icon: () =>
+      ART.svg(
+        '<g fill="currentColor"><rect x="4" y="12" width="14" height="12" rx="3"/><rect x="22" y="12" width="14" height="12" rx="3"/></g>',
+        "0 0 40 36",
+      ),
+  },
+  {
+    id: "soft",
+    title: () => "Твёрдый или мягкий?",
+    hint: () => "Слышим разницу: МА или МЯ.",
+    icon: () => "А·Я",
+  },
+];
+
+const availableGames = (p) => GAMES.filter((g) => p[g.id].length > 0);
+
+function focusMain() {
+  main.querySelector("h1")?.focus({ preventScroll: true });
+  window.scrollTo({ top: 0, behavior: "instant" });
+}
+
+/** Подпись в подвале: какой материал сейчас в занятии. */
+function syncFooter() {
+  if (!footerMaterial) return;
+  const count = plan().pool.length;
+  const word =
+    count % 10 === 1 && count % 100 !== 11
+      ? "слог"
+      : [2, 3, 4].includes(count % 10) && ![12, 13, 14].includes(count % 100)
+        ? "слога"
+        : "слогов";
+  // Букв бывает и две, и тридцать: перечисляем, пока помещается.
+  const letters =
+    prefs.letters.length <= 8
+      ? prefs.letters.join(" ")
+      : `${prefs.letters.length} букв`;
+  footerMaterial.textContent = `Буквы занятия · ${letters} · ${count} ${word}`;
+}
+
+function renderHome() {
+  view = "home";
+  syncFooter();
+  const p = plan();
+  // По одному слогу от каждой буквы, с разными гласными: ряд МА СА ХА РА
+  // выглядел бы однообразно. Больше шести фишек не показываем.
+  const chips = prefs.letters
+    .map((id, i) => {
+      const own = CURRICULUM.syllablesOf(id, prefs.vowels);
+      return own.length ? own[i % own.length] : null;
+    })
+    .filter(Boolean)
+    .slice(0, 6);
+  const shown = chips.length ? chips : p.pool.slice(0, 3);
+  const garden = [...new Set([...shown, ...p.pool])].slice(0, 3);
+  const games = availableGames(p);
+  main.innerHTML = `<section class="home-hero"><div class="hero-copy"><div class="eyebrow">Читаем вместе · слоги по букварю</div><h1 tabindex="-1">По слогу —<br>к большим <span class="accent">историям.</span></h1><p class="intro">Поиграем с буквами и вырастим маленький сад. Всего несколько заданий — и ещё один шаг к чтению.</p><div class="known-syllables">${shown.map((s) => `<span>${s}</span>`).join("")}<small>сегодняшние слоги</small></div><button class="primary" data-action="start" data-mode="mixed">Начать маленькое занятие <span aria-hidden="true">→</span></button><p class="under-button"><span aria-hidden="true">◷</span> ${prefs.length} ${prefs.length === 3 ? "задания" : "заданий"} · без спешки · вместе со взрослым</p></div><div class="hero-art" role="img" aria-label="Слоги ${garden.join(", ")} на карточках в саду с цветами">${ART.garden(garden)}<span class="art-note">Всё начинается<br>с маленького семечка</span><span class="art-badge">Чуть-чуть каждый день — и получится</span></div></section><section aria-labelledby="games-title"><div class="section-head"><h2 id="games-title">А можно выбрать игру</h2><span>${games.length} ${games.length === 5 ? "способов" : "способа"} подружиться со слогами</span></div><div class="games-grid">${games
+    .map(
+      (g) =>
+        `<button class="game-card" data-action="start" data-mode="${g.id}"><span class="mini-icon" aria-hidden="true">${g.icon(p)}</span><span class="card-arrow" aria-hidden="true">↗</span><h3>${g.title()}</h3><p>${g.hint()}</p></button>`,
+    )
+    .join("")}</div></section><section class="adult-strip" aria-label="Подсказка взрослому"><div class="strip-copy"><span aria-hidden="true">♧</span><div><h3>Вы рядом — и это главное</h3><p>Произносите задания, помогайте и замечайте маленькие успехи.</p></div></div><button class="text-button" data-action="adult">Настроить занятие <span aria-hidden="true">↗</span></button></section>`;
+}
 
 /**
  * Выбирает варианты ответа для игры «Где спрятался слог?».
@@ -123,7 +265,8 @@ const lessonSyllables = () =>
  * @returns {string[]} перемешанный набор из count слогов
  *
  * Сейчас неверные варианты берутся случайно. Насколько трудным получится
- * выбор — решение не техническое: см. комментарий ниже.
+ * выбор — решение не техническое: похожие слоги (СА/СУ/СО или СА/МА/РА)
+ * заставляют вслушиваться, далёкие позволяют угадать по виду.
  */
 function pickOptions(target, pool, forbidden, count) {
   const candidates = pool.filter(
@@ -132,95 +275,80 @@ function pickOptions(target, pool, forbidden, count) {
   return shuffle([target, ...shuffle(candidates).slice(0, count - 1)]);
 }
 
-function focusMain() {
-  main.querySelector("h1")?.focus({ preventScroll: true });
-  window.scrollTo({ top: 0, behavior: "instant" });
-}
-
-/** Подпись в подвале: какой материал сейчас в занятии. */
-function syncFooter() {
-  if (!footerMaterial) return;
-  const count = lessonSyllables().length;
-  footerMaterial.textContent = `Буквы занятия · ${prefs.letters.join(", ")} · ${count} ${count % 10 === 1 && count % 100 !== 11 ? "слог" : "слогов"}`;
-}
-
-function renderHome() {
-  view = "home";
-  syncFooter();
-  const pool = lessonSyllables();
-  // Одна буква — показываем все её слоги. Несколько — по одному от каждой,
-  // с разными гласными, чтобы не получился ряд вида МА СА ХА РА ША.
-  const chips =
-    prefs.letters.length === 1
-      ? pool
-      : prefs.letters.map((id, i) => {
-          const own = CURRICULUM.syllablesOf(id);
-          return own[i % own.length];
-        });
-  const gardenSample = [...new Set([...chips, ...pool])].slice(0, 3);
-  main.innerHTML = `<section class="home-hero"><div class="hero-copy"><div class="eyebrow">Читаем вместе · слоги по букварю</div><h1 tabindex="-1">По слогу —<br>к большим <span class="accent">историям.</span></h1><p class="intro">Поиграем с буквами и вырастим маленький сад. Всего несколько заданий — и ещё один шаг к чтению.</p><div class="known-syllables">${chips.map((s) => `<span>${s}</span>`).join("")}<small>сегодняшние слоги</small></div><button class="primary" data-action="start" data-mode="mixed">Начать маленькое занятие <span aria-hidden="true">→</span></button><p class="under-button"><span aria-hidden="true">◷</span> ${prefs.length} ${prefs.length === 3 ? "задания" : "заданий"} · без спешки · вместе со взрослым</p></div><div class="hero-art" role="img" aria-label="Слоги ${gardenSample.join(", ")} на карточках в саду с цветами">${ART.garden(gardenSample)}<span class="art-note">Всё начинается<br>с маленького семечка</span><span class="art-badge">Чуть-чуть каждый день — и получится</span></div></section><section aria-labelledby="games-title"><div class="section-head"><h2 id="games-title">А можно выбрать игру</h2><span>Три способа подружиться со слогами</span></div><div class="games-grid"><button class="game-card" data-action="start" data-mode="card"><span class="mini-icon" aria-hidden="true">${chips[0]}</span><span class="card-arrow" aria-hidden="true">↗</span><h3>Карточки слогов</h3><p>Смотрим, тянем звуки, читаем.</p></button><button class="game-card" data-action="start" data-mode="blend"><span class="mini-icon" aria-hidden="true">${chips[0][0]}→${chips[0][1]}</span><span class="card-arrow" aria-hidden="true">↗</span><h3>Подружи буквы</h3><p>Соединяем согласную с гласной.</p></button><button class="game-card" data-action="start" data-mode="picture"><span class="mini-icon" aria-hidden="true">${ART.svg('<path d="M7 18V7h25v22H7Z" fill="none" stroke="currentColor" stroke-width="2"/><circle cx="24" cy="12" r="3" fill="currentColor"/><path d="m8 25 8-10 8 10 5-5 4 6" fill="none" stroke="currentColor" stroke-width="2"/>', "0 0 40 36")}</span><span class="card-arrow" aria-hidden="true">↗</span><h3>${prefs.position === "start" ? "Что в начале?" : "Где спрятался слог?"}</h3><p>${prefs.position === "start" ? "Узнаём знакомый слог в начале слова." : "Ищем знакомый слог внутри слова."}</p></button></div></section><section class="adult-strip" aria-label="Подсказка взрослому"><div class="strip-copy"><span aria-hidden="true">♧</span><div><h3>Вы рядом — и это главное</h3><p>Произносите задания, помогайте и замечайте маленькие успехи.</p></div></div><button class="text-button" data-action="adult">Настроить занятие <span aria-hidden="true">↗</span></button></section>`;
-}
-
 function start(mode = "mixed") {
-  const pool = lessonSyllables();
-  if (!pool.length) return;
-  const targets = [];
-  while (targets.length < prefs.length) targets.push(...shuffle(pool));
-  const types = ["card", "blend", "picture"];
+  const p = plan();
+  const games = availableGames(p);
+  if (!games.length) return;
+  const ids =
+    mode === "mixed" ? games.map((g) => g.id) : games.some((g) => g.id === mode) ? [mode] : null;
+  if (!ids) return;
+
+  // Для каждой игры свой запас подходящих заданий; перемешиваем и выдаём
+  // по кругу, чтобы внутри серии поменьше повторяться.
+  const queues = Object.fromEntries(ids.map((id) => [id, shuffle(p[id])]));
+  const taken = Object.fromEntries(ids.map((id) => [id, 0]));
+  const next = (id) => {
+    const list = queues[id];
+    return list[taken[id]++ % list.length];
+  };
+
+  const startOnly = prefs.position === "start";
   session = {
     mode,
-    queue: targets.slice(0, prefs.length).map((target, i) => {
-      const type = mode === "mixed" ? types[i % 3] : mode;
-      const startOnly = prefs.position === "start";
-      const choices = CURRICULUM.wordsFor(target, startOnly);
-      const word = choices[Math.floor(Math.random() * choices.length)];
-      return {
-        type,
-        target,
-        word,
-        // В «Подружи буквы» выбирают гласную, поэтому варианты — только слоги
-        // той же согласной. Заодно видно, что у Х нет пары с Ы.
-        options:
-          type === "blend"
-            ? shuffle(CURRICULUM.syllablesOf(target[0]))
-            : pickOptions(target, pool, word ? word.contains : [], OPTION_COUNT),
-        prompt: prefs.prompt,
-        position: prefs.position,
-      };
+    queue: Array.from({ length: prefs.length }, (_, i) => {
+      const type = ids[i % ids.length];
+      if (type === "read") return { type, word: next("read") };
+
+      const target = next(type);
+      const q = { type, target, prompt: prefs.prompt, position: prefs.position };
+      if (type === "blend") {
+        // Выбирают гласную, поэтому варианты — только слоги той же
+        // согласной и только из пройденных гласных.
+        q.options = shuffle(
+          CURRICULUM.syllablesOf(target[0], prefs.vowels),
+        );
+      } else if (type === "soft") {
+        q.options = shuffle([target, CURRICULUM.softPair(target)]);
+      } else if (type === "picture") {
+        const choices = CURRICULUM.wordsFor(target, { startOnly });
+        q.word = choices[Math.floor(Math.random() * choices.length)];
+        q.options = pickOptions(target, p.pool, q.word.contains, OPTION_COUNT);
+      }
+      return q;
     }),
     index: 0,
     results: [],
-    assisted: false,
-    attempts: 0,
-    pickedConsonant: false,
-    solved: false,
-    hint: false,
-    lastWrong: null,
-    notice: null,
+    ...blankQuestion(),
   };
   renderLesson(true);
 }
 
-function resetQuestion() {
-  Object.assign(session, {
-    assisted: false,
-    attempts: 0,
-    pickedConsonant: false,
-    solved: false,
-    hint: false,
-    lastWrong: null,
-    notice: null,
-  });
-}
+const blankQuestion = () => ({
+  assisted: false,
+  attempts: 0,
+  pickedConsonant: false,
+  solved: false,
+  hint: false,
+  revealed: false,
+  lastWrong: null,
+  notice: null,
+});
+
+const resetQuestion = () => Object.assign(session, blankQuestion());
 
 /** Подсказка взрослому внизу экрана — своя для каждой игры и буквы. */
 function helpText(q) {
+  const letter = q.target ? CURRICULUM.letterOf(q.target) : null;
   if (q.type === "card")
-    return "Взрослому: послушайте чтение и отметьте результат. Если понадобилась помощь — прочитайте вместе.";
-  if (q.type === "blend") {
-    const letter = CURRICULUM.letterOf(q.target);
-    return `Взрослому: переходите от согласного к гласному плавно, без паузы между звуками. ${letter.tip}`;
-  }
+    return `Взрослому: послушайте чтение и отметьте результат. Если понадобилась помощь — прочитайте вместе. ${letter.tip}`;
+  if (q.type === "blend")
+    return letter.hold
+      ? `Взрослому: тяните «${letter.sound}» и переходите к гласному плавно, без паузы между звуками. ${letter.tip}`
+      : `Взрослому: этот звук тянуть нельзя — произнесите слог одним движением, «${q.target.toLowerCase()}», а не «${letter.id.toLowerCase()}… ${q.target[1].toLowerCase()}». ${letter.tip}`;
+  if (q.type === "read")
+    return "Взрослому: пусть ребёнок ведёт пальцем и читает слог за слогом, а не по буквам. Подскажите первый слог, если нужно, и не торопите.";
+  if (q.type === "soft")
+    return `Взрослому: произнесите слог один раз, отчётливо. Если ребёнок не слышит разницу — скажите оба подряд: «${q.options.map((s) => s.toLowerCase()).join(" — ")}».`;
   return q.position === "start"
     ? "Взрослому: назовите картинку или прочитайте слово. Ребёнок ищет только знакомые первые два звука; всё слово читать не нужно."
     : "Взрослому: назовите слово по слогам. Слог может быть в начале, в середине или в конце — ребёнок ищет его на слух, читать всё слово не нужно.";
@@ -231,31 +359,46 @@ function lessonShell(inner) {
   return `<section class="lesson"><div class="lesson-bar"><button class="back-button" data-action="pause"><span aria-hidden="true">←</span> К играм</button><span class="step-count">Задание ${session.index + 1} из ${session.queue.length}</span><button class="pause-button" data-action="pause"><span aria-hidden="true">Ⅱ</span> Пауза</button></div><div class="progress-trail" aria-label="Выполнено ${session.index} из ${session.queue.length}">${session.queue.map((_, i) => `<span aria-hidden="true" class="progress-dot ${i < session.index ? "done" : i === session.index ? "current" : ""}">✳</span>`).join("")}</div><div class="exercise">${inner}</div><div class="lesson-help"><span aria-hidden="true">♧</span><p>${helpText(q)}</p></div></section>`;
 }
 
+const adultMarks = `<div class="action-row"><button class="secondary" data-action="card-done" data-help="yes">Прочитали вместе</button><button class="primary small-primary" data-action="card-done" data-help="no">Получилось самостоятельно <span aria-hidden="true">✓</span></button></div>`;
+
 function renderLesson(focus = false) {
   view = "lesson";
   const q = session.queue[session.index];
-  const consonant = q.target[0],
-    vowel = q.target[1];
   const next =
     '<button class="primary small-primary" data-action="next">Дальше <span aria-hidden="true">→</span></button>';
   let body = "";
+
   if (q.type === "card") {
-    body = `<p class="exercise-kicker">Карточки слогов</p><h1 tabindex="-1">Прочитай слог</h1><p class="task-description">Не спеши. У нас всё получится.</p><button class="flash-card" data-action="hint" aria-label="Слог ${q.target}. Показать соединение звуков"><span class="big-syllable">${q.target}</span><small>Нажми, чтобы подружить звуки</small></button><div class="blend-hint" aria-live="polite">${session.hint ? `${consonant} <span aria-hidden="true">⟶</span> ${vowel} <span aria-hidden="true">·</span> ${q.target}` : ""}</div><p class="parent-caption">Взрослому: послушайте и отметьте, как получилось.</p><div class="action-row"><button class="secondary" data-action="card-done" data-help="yes">Прочитали вместе</button><button class="primary small-primary" data-action="card-done" data-help="no">Получилось самостоятельно <span aria-hidden="true">✓</span></button></div>`;
+    const [consonant, vowel] = q.target;
+    body = `<p class="exercise-kicker">Карточки слогов</p><h1 tabindex="-1">Прочитай слог</h1><p class="task-description">Не спеши. У нас всё получится.</p><button class="flash-card" data-action="hint" aria-label="Слог ${q.target}. Показать соединение звуков"><span class="big-syllable">${q.target}</span><small>Нажми, чтобы подружить звуки</small></button><div class="blend-hint" aria-live="polite">${session.hint ? `${consonant} <span aria-hidden="true">⟶</span> ${vowel} <span aria-hidden="true">·</span> ${q.target}` : ""}</div><p class="parent-caption">Взрослому: послушайте и отметьте, как получилось.</p>${adultMarks}`;
   } else if (q.type === "blend") {
+    const [consonant, vowel] = q.target;
     body = `<p class="exercise-kicker">Подружи буквы</p><h1 tabindex="-1">Собери слог ${q.target}</h1><p class="task-description">${session.solved ? "Прочитай, как звуки подружились." : session.pickedConsonant ? "Теперь выбери гласную внизу." : `Сначала нажми на «${consonant}», затем на гласную.`}</p>${session.solved ? `<div class="blend-result">${q.target}</div>` : `<div class="blend-board"><button class="letter-source ${session.pickedConsonant ? "selected" : ""}" data-action="select-consonant" aria-label="Выбрать букву ${consonant}" aria-pressed="${session.pickedConsonant}">${consonant}</button><span class="blend-arrow" aria-hidden="true"></span><div class="letter-destination" aria-label="Место для гласной">?</div></div>`}<div class="choice-row">${q.options.map((s) => `<button class="choice ${session.solved && s === q.target ? "correct" : ""} ${session.lastWrong === s ? "retry" : ""}" data-action="vowel" data-value="${s}" aria-label="Гласная ${s[1]}" ${session.solved ? "disabled" : ""}>${s[1]}</button>`).join("")}</div>${feedback(q)}${session.hint && !session.solved ? `<div class="hint-box">Проведи пальчиком слева направо и прочитай вместе со взрослым: <strong>${consonant} → ${vowel} → ${q.target}</strong></div>` : ""}<div class="action-row">${session.solved ? next : '<button class="text-button" data-action="hint">Помоги мне</button>'}</div>`;
+  } else if (q.type === "read") {
+    const picture = drawn(q.word);
+    body = `<p class="exercise-kicker">Прочитай слово</p><h1 tabindex="-1">Читаем по слогам</h1><p class="task-description">Веди пальчиком и читай слог за слогом.</p><div class="read-word" aria-label="${q.word.word.toLowerCase()}">${q.word.parts.map((part) => `<span>${part}</span>`).join("")}</div>${session.revealed && picture ? `<div class="picture-wrap" role="img" aria-label="${q.word.word.toLowerCase()}">${ART.word(q.word.art)}</div>` : ""}<p class="parent-caption">Взрослому: послушайте и отметьте, как получилось.</p>${picture && !session.revealed ? '<div class="action-row"><button class="text-button" data-action="reveal">Посмотреть, что это <span aria-hidden="true">↓</span></button></div>' : ""}${adultMarks}`;
+  } else if (q.type === "soft") {
+    body = `<p class="exercise-kicker">Твёрдый или мягкий?</p><h1 tabindex="-1">Какой слог назвали?</h1><p class="task-description">Послушай взрослого и выбери карточку.</p><p class="listen-word">Взрослому: произнесите <strong>«${q.target.toLowerCase()}»</strong> один раз.</p><div class="choice-row">${q.options.map((s) => `<button class="choice ${session.solved && s === q.target ? "correct" : ""} ${session.lastWrong === s ? "retry" : ""}" data-action="answer" data-value="${s}" aria-label="Слог ${s}" ${session.solved ? "disabled" : ""}>${s}</button>`).join("")}</div>${feedback(q)}${session.hint && !session.solved ? `<div class="hint-box">Произнесите оба подряд и сравните: <strong>${q.options.join(" — ")}</strong>. В мягком слоге согласная звучит мягче.</div>` : ""}<div class="action-row">${session.solved ? next : '<button class="text-button" data-action="hint">Помоги мне</button>'}</div>`;
   } else {
     const at = q.word.at[q.target];
-    const shown = session.solved
-      ? `${q.word.word.slice(0, at)}<span class="found">${q.target}</span>${q.word.word.slice(at + 2)}`
-      : q.word.word;
-    body = `<p class="exercise-kicker">${q.position === "start" ? "Что в начале?" : "Где спрятался слог?"}</p><h1 tabindex="-1">${q.position === "start" ? "Найди начало слова" : "Найди знакомый слог"}</h1><p class="task-description">Послушай взрослого и выбери слог.</p>${q.prompt === "picture" ? `<div class="picture-wrap" role="img" aria-label="${q.word.word.toLowerCase()}">${ART.word(q.word.art)}</div>` : `<div class="word-card">${shown}</div>`}<p class="listen-word">Взрослому: произнесите <strong>«${q.word.spoken}»</strong> по слогам.</p><div class="choice-row">${q.options.map((s) => `<button class="choice ${session.solved && s === q.target ? "correct" : ""} ${session.lastWrong === s ? "retry" : ""}" data-action="answer" data-value="${s}" aria-label="Слог ${s}" ${session.solved ? "disabled" : ""}>${s}</button>`).join("")}</div>${feedback(q)}${session.hint && !session.solved ? `<div class="hint-box">${q.position === "start" ? "Послушай первые звуки" : "Послушай слово ещё раз — слог спрятался внутри"}: <strong>${q.target}</strong>. Найди такую карточку.</div>` : ""}<div class="action-row">${session.solved ? next : '<button class="text-button" data-action="hint">Помоги мне</button>'}</div>`;
+    const marked = `${q.word.word.slice(0, at)}<span class="found">${q.target}</span>${q.word.word.slice(at + 2)}`;
+    // Картинку показываем, если она нарисована; иначе слово текстом.
+    const asPicture = q.prompt === "picture" && drawn(q.word);
+    body = `<p class="exercise-kicker">${q.position === "start" ? "Что в начале?" : "Где спрятался слог?"}</p><h1 tabindex="-1">${q.position === "start" ? "Найди начало слова" : "Найди знакомый слог"}</h1><p class="task-description">Послушай взрослого и выбери слог.</p>${asPicture ? `<div class="picture-wrap" role="img" aria-label="${q.word.word.toLowerCase()}">${ART.word(q.word.art)}</div>` : `<div class="word-card">${session.solved ? marked : q.word.word}</div>`}<p class="listen-word">Взрослому: произнесите <strong>«${q.word.spoken}»</strong> по слогам.</p><div class="choice-row">${q.options.map((s) => `<button class="choice ${session.solved && s === q.target ? "correct" : ""} ${session.lastWrong === s ? "retry" : ""}" data-action="answer" data-value="${s}" aria-label="Слог ${s}" ${session.solved ? "disabled" : ""}>${s}</button>`).join("")}</div>${feedback(q)}${session.hint && !session.solved ? `<div class="hint-box">${q.position === "start" ? "Послушай первые звуки" : "Послушай слово ещё раз — слог спрятался внутри"}: <strong>${q.target}</strong>. Найди такую карточку.</div>` : ""}<div class="action-row">${session.solved ? next : '<button class="text-button" data-action="hint">Помоги мне</button>'}</div>`;
   }
+
   main.innerHTML = lessonShell(body);
   if (focus) focusMain();
 }
 
 function feedback(q) {
-  return `<div class="feedback ${session.lastWrong ? "retry-text" : ""}" role="status" aria-live="polite">${session.solved ? "Получилось! Ещё один цветочек." : session.lastWrong ? (q.type === "blend" ? "Попробуй другую гласную. Мы не спешим." : "Послушаем слово ещё раз. Попробуй другую карточку.") : session.notice || " "}</div>`;
+  const retry =
+    q.type === "blend"
+      ? "Попробуй другую гласную. Мы не спешим."
+      : q.type === "soft"
+        ? "Послушаем ещё раз. Попробуй другую карточку."
+        : "Послушаем слово ещё раз. Попробуй другую карточку.";
+  return `<div class="feedback ${session.lastWrong ? "retry-text" : ""}" role="status" aria-live="polite">${session.solved ? "Получилось! Ещё один цветочек." : session.lastWrong ? retry : session.notice || " "}</div>`;
 }
 
 function answer(value, isVowel = false) {
@@ -266,7 +409,7 @@ function answer(value, isVowel = false) {
     renderLesson();
     return;
   }
-  if (!q.options.includes(value)) return;
+  if (!q.options?.includes(value)) return;
   session.attempts++;
   if (value === q.target) {
     session.solved = true;
@@ -280,12 +423,15 @@ function answer(value, isVowel = false) {
     main.querySelector('[data-action="next"]')?.focus({ preventScroll: true });
 }
 
+/** Игры, где результат отмечает взрослый, а не проверяет интерфейс. */
+const adultJudged = (type) => type === "card" || type === "read";
+
 function finishQuestion(help = false) {
   if (view !== "lesson") return;
   const q = session.queue[session.index];
-  if (q.type !== "card" && !session.solved) return;
+  if (!adultJudged(q.type) && !session.solved) return;
   session.results.push({
-    target: q.target,
+    target: q.target || q.word.word,
     type: q.type,
     help: help || session.assisted,
     attempts: session.attempts,
@@ -312,19 +458,27 @@ function complete(partial = false) {
     history = history.slice(-20);
     save();
   }
+  const bySyllable = CURRICULUM.syllables.filter((s) =>
+    results.some((r) => r.target === s),
+  );
+  const readWords = results.filter((r) => r.type === "read");
   view = "summary";
   main.innerHTML = `<section class="lesson"><div class="lesson-bar"><button class="back-button" data-action="home">← К играм</button><span class="step-count">${completed} из ${total} заданий</span></div><div class="exercise"><div class="summary-art">${ART.summary(completed)}</div><p class="exercise-kicker">${completed ? "Маленький шаг сделан" : "Занятие подождёт"}</p><h1 tabindex="-1">${completed ? "Твой сад растёт!" : "Отдохнём и вернёмся"}</h1><p class="summary-text">${completed ? "Здорово потрудились вместе. Теперь можно отдохнуть — можно вернуться в сад, когда захочется." : "Сегодня можно просто рассмотреть карточки вместе. Начнём, когда будет настроение."}</p><div class="action-row"><button class="primary small-primary" data-action="home">На сегодня всё <span aria-hidden="true">✓</span></button>${completed ? `<button class="secondary" data-action="start" data-mode="${mode}">Ещё одна серия</button>` : ""}</div>${
     completed
-      ? `<details class="results-details"><summary>Взрослому: как прошло занятие</summary><p>Выполнено ${completed} из ${total}. Самостоятельно: ${independent}. С повтором или подсказкой: ${completed - independent}.</p><table><thead><tr><th>Слог</th><th>Самостоятельно</th><th>С помощью / повтором</th></tr></thead><tbody>${CURRICULUM.syllables.filter(
-          (s) => results.some((r) => r.target === s),
-        )
-          .map(
-            (s) =>
-              `<tr><td><strong>${s}</strong></td><td>${results.filter((r) => r.target === s && !r.help).length}</td><td>${results.filter((r) => r.target === s && r.help).length}</td></tr>`,
-          )
-          .join(
-            "",
-          )}</tbody></table><p class="completed-message">Это наблюдение за занятием, а не оценка навыка. Чтение вслух отмечает взрослый.</p></details>`
+      ? `<details class="results-details"><summary>Взрослому: как прошло занятие</summary><p>Выполнено ${completed} из ${total}. Самостоятельно: ${independent}. С повтором или подсказкой: ${completed - independent}.</p>${
+          bySyllable.length
+            ? `<table><thead><tr><th>Слог</th><th>Самостоятельно</th><th>С помощью / повтором</th></tr></thead><tbody>${bySyllable
+                .map(
+                  (s) =>
+                    `<tr><td><strong>${s}</strong></td><td>${results.filter((r) => r.target === s && !r.help).length}</td><td>${results.filter((r) => r.target === s && r.help).length}</td></tr>`,
+                )
+                .join("")}</tbody></table>`
+            : ""
+        }${
+          readWords.length
+            ? `<p>Прочитано слов: ${readWords.map((r) => `<strong>${r.target}</strong>${r.help ? " (вместе)" : ""}`).join(", ")}.</p>`
+            : ""
+        }<p class="completed-message">Это наблюдение за занятием, а не оценка навыка. Чтение вслух отмечает взрослый.</p></details>`
       : ""
   }${!storageAvailable ? '<p class="completed-message storage-warning">Браузер не разрешил сохранить результат. Играть по-прежнему можно.</p>' : ""}</div></section>`;
   session = null;
@@ -333,11 +487,28 @@ function complete(partial = false) {
 
 function showAdult() {
   const current = view === "lesson";
-  const chosen = CURRICULUM.letters.filter((l) => prefs.letters.includes(l.id));
-  adultDialog.innerHTML = `<button class="close-button" data-action="close-adult" aria-label="Закрыть настройки">×</button><div class="dialog-eyebrow">ДЛЯ ВЗРОСЛОГО</div><h2 id="adult-title">Занимаемся вместе</h2><p>Буквы идут в порядке «Букваря» Жуковой:<br>${CURRICULUM.letterIds.join(" · ")}. Отметьте те, что уже пройдены.</p><form id="settings-form"><fieldset class="setting-group"><legend>Какие буквы повторяем</legend><div class="setting-options">${CURRICULUM.letters.map((l) => `<label class="option"><input type="checkbox" name="letters" value="${l.id}" ${prefs.letters.includes(l.id) ? "checked" : ""}><span><b class="letter-mark">${l.id}</b><small>${CURRICULUM.syllablesOf(l.id).join(" ")}</small></span></label>`).join("")}</div><p class="setting-note">${CURRICULUM.letters
-    .filter((l) => l.note)
-    .map((l) => l.note)
-    .join(" ")}</p></fieldset><fieldset class="setting-group"><legend>Длина одной серии</legend><div class="setting-options">${LENGTHS.map((n) => `<label class="option"><input type="radio" name="length" value="${n}" ${prefs.length === n ? "checked" : ""}><span>${n} ${n === 3 ? "задания" : "заданий"}</span></label>`).join("")}</div></fieldset><fieldset class="setting-group"><legend>Где искать слог в слове</legend><div class="setting-options"><label class="option"><input type="radio" name="position" value="start" ${prefs.position === "start" ? "checked" : ""}><span>Только в начале</span></label><label class="option"><input type="radio" name="position" value="any" ${prefs.position === "any" ? "checked" : ""}><span>В любом месте</span></label></div><p class="setting-note">«Только в начале» — задания вида СА в слове САНИ. «В любом месте» труднее: слог может оказаться в середине или в конце — МУХА, БУСЫ, МЕШОК.</p></fieldset><fieldset class="setting-group"><legend>Что показывать в этой игре</legend><div class="setting-options"><label class="option"><input type="radio" name="prompt" value="picture" ${prefs.prompt === "picture" ? "checked" : ""}><span>Картинка</span></label><label class="option"><input type="radio" name="prompt" value="word" ${prefs.prompt === "word" ? "checked" : ""}><span>Слово</span></label></div><p class="setting-note">В обоих вариантах слово произносите вы. Ребёнку не нужно читать его целиком.</p></fieldset><div class="parent-guide"><h3>Как помочь прочитать</h3><p>Тяните согласный звук и плавно переходите к гласному, без паузы и добавочного звука. Называйте звук, а не букву: «с-с-с», а не «эс».</p>${chosen.map((l) => `<p><b>${l.id}</b> — «${l.sound}». ${l.tip}${l.note ? ` ${l.note}` : ""}</p>`).join("")}<p>На карточке послушайте ребёнка и отметьте, получилось ли самостоятельно. В остальных играх достаточно нажимать на большие кнопки — перетаскивать ничего не нужно.</p><p>При усталости нажмите «Пауза». Не обязательно завершать всю серию.</p></div><p class="setting-note">Самостоятельные упражнения для закрепления вашего этапа. Страницы и иллюстрации букваря здесь не воспроизводятся.</p><div class="save-status" id="save-status" role="status">${current ? "Настройки применятся к следующей серии." : ""}</div><div class="dialog-actions"><button type="submit" class="primary">Сохранить настройки <span aria-hidden="true">✓</span></button><button type="button" class="text-button" data-action="close-adult">Закрыть</button></div></form><div class="history"><h3>Последние занятия</h3>${
+  const chosen = CURRICULUM.alphabet.filter(
+    (l) => l.tip && prefs.letters.includes(l.id),
+  );
+  const p = plan();
+  const letterChip = (l) =>
+    `<label class="option"><input type="checkbox" name="letters" value="${l.id}" ${prefs.letters.includes(l.id) ? "checked" : ""}><span class="chip"><b class="letter-mark">${l.id}</b><small>${l.kind === "consonant" ? `${CURRICULUM.syllablesOf(l.id, prefs.vowels).length} слог.` : "без слога"}</small></span></label>`;
+  const vowelChip = (l) =>
+    `<label class="option"><input type="checkbox" name="vowels" value="${l.id}" ${prefs.vowels.includes(l.id) ? "checked" : ""}><span class="chip"><b class="letter-mark">${l.id}</b><small>${l.row === "soft" ? "мягкая" : "твёрдая"}</small></span></label>`;
+
+  adultDialog.innerHTML = `<button class="close-button" data-action="close-adult" aria-label="Закрыть настройки">×</button><div class="dialog-eyebrow">ДЛЯ ВЗРОСЛОГО</div><h2 id="adult-title">Занимаемся вместе</h2><p>Отмечены буквы, которые уже пройдены. Слог попадает в занятие, только когда пройдены обе его буквы — и согласная, и гласная.</p><form id="settings-form"><fieldset class="setting-group"><legend>Мы дошли до буквы</legend><div class="letter-ladder">${CURRICULUM.alphabet
+    .map(
+      (l) =>
+        `<button type="button" class="ladder-step ${l.kind === "vowel" ? "vowel" : ""}" data-action="upto" data-letter="${l.id}">${l.id}</button>`,
+    )
+    .join(
+      "",
+    )}</div><p class="setting-note">Порядок букв — как в «Букваре» Жуковой. Нажмите букву: отметится всё до неё включительно. Дальше можно поправить вручную.</p></fieldset><fieldset class="setting-group"><legend>Согласные и знаки</legend><div class="setting-options compact">${CURRICULUM.alphabet
+    .filter((l) => l.kind !== "vowel")
+    .map(letterChip)
+    .join(
+      "",
+    )}</div></fieldset><fieldset class="setting-group"><legend>Гласные</legend><div class="setting-options compact">${CURRICULUM.vowelLetters.map(vowelChip).join("")}</div><p class="setting-note">Сейчас получается ${p.pool.length} ${p.pool.length === 1 ? "слог" : "слогов"} и ${p.read.length} ${p.read.length === 1 ? "слово" : "слов"} для чтения.</p></fieldset><fieldset class="setting-group"><legend>Длина одной серии</legend><div class="setting-options">${LENGTHS.map((n) => `<label class="option"><input type="radio" name="length" value="${n}" ${prefs.length === n ? "checked" : ""}><span>${n} ${n === 3 ? "задания" : "заданий"}</span></label>`).join("")}</div></fieldset><fieldset class="setting-group"><legend>Где искать слог в слове</legend><div class="setting-options"><label class="option"><input type="radio" name="position" value="start" ${prefs.position === "start" ? "checked" : ""}><span>Только в начале</span></label><label class="option"><input type="radio" name="position" value="any" ${prefs.position === "any" ? "checked" : ""}><span>В любом месте</span></label></div><p class="setting-note">«Только в начале» — задания вида СА в слове САНИ. «В любом месте» труднее: слог может оказаться в середине или в конце — МУХА, БУСЫ, МЕШОК.</p></fieldset><fieldset class="setting-group"><legend>Что показывать в этой игре</legend><div class="setting-options"><label class="option"><input type="radio" name="prompt" value="picture" ${prefs.prompt === "picture" ? "checked" : ""}><span>Картинка</span></label><label class="option"><input type="radio" name="prompt" value="word" ${prefs.prompt === "word" ? "checked" : ""}><span>Слово</span></label></div><p class="setting-note">В обоих вариантах слово произносите вы. Ребёнку не нужно читать его целиком. Если рисунка для слова ещё нет, оно покажется текстом.</p></fieldset><div class="parent-guide"><h3>Как помочь прочитать</h3><p>Тяните согласный звук и плавно переходите к гласному, без паузы. Называйте звук, а не букву: «с-с-с», а не «эс». Звуки К, Т, П, Г, Д, Б, Ц и Ч тянуть нельзя — такой слог произносите одним движением.</p><details class="letter-guide"><summary>Подсказки по выбранным буквам (${chosen.length})</summary>${chosen.map((l) => `<p><b>${l.id}</b>${l.sound ? ` — «${l.sound}»` : ""}. ${l.tip}${l.note ? ` ${l.note}` : ""}</p>`).join("")}</details><p>На карточке и в чтении слова послушайте ребёнка и отметьте, получилось ли самостоятельно. В остальных играх достаточно нажимать на большие кнопки — перетаскивать ничего не нужно.</p><p>При усталости нажмите «Пауза». Не обязательно завершать всю серию.</p></div><p class="setting-note">Самостоятельные упражнения для закрепления пройденного. Страницы и иллюстрации букваря здесь не воспроизводятся.</p><div class="save-status" id="save-status" role="status">${current ? "Настройки применятся к следующей серии." : ""}</div><div class="dialog-actions"><button type="submit" class="primary">Сохранить настройки <span aria-hidden="true">✓</span></button><button type="button" class="text-button" data-action="close-adult">Закрыть</button></div></form><div class="history"><h3>Последние занятия</h3>${
     history.length
       ? history
           .slice(-5)
@@ -356,24 +527,41 @@ document.addEventListener("submit", (e) => {
   if (e.target.id !== "settings-form") return;
   e.preventDefault();
   const data = new FormData(e.target);
-  const letters = CURRICULUM.letterIds.filter((id) =>
-    data.getAll("letters").includes(id),
+  const picked = data.getAll("letters");
+  const letters = CURRICULUM.alphabet
+    .filter((l) => l.kind !== "vowel" && picked.includes(l.id))
+    .map((l) => l.id);
+  const vowels = CURRICULUM.vowelIds.filter((id) =>
+    data.getAll("vowels").includes(id),
   );
-  if (!letters.length) {
-    document.getElementById("save-status").textContent =
-      "Выберите хотя бы одну букву.";
-    e.target.querySelector('input[name="letters"]').focus();
+  const status = document.getElementById("save-status");
+  if (!letters.length || !vowels.length) {
+    status.textContent = !letters.length
+      ? "Выберите хотя бы одну согласную."
+      : "Выберите хотя бы одну гласную.";
+    e.target
+      .querySelector(`input[name="${letters.length ? "vowels" : "letters"}"]`)
+      .focus();
     return;
   }
+  const before = { ...prefs };
   prefs = {
     letters,
+    vowels,
     length: Number(data.get("length")),
     prompt: data.get("prompt"),
     position: data.get("position"),
   };
+  // Набор может не дать ни одного слога: например, отмечены только Ь и Ъ.
+  if (!plan().pool.length) {
+    prefs = before;
+    status.textContent =
+      "Из этих букв не получается ни одного слога. Добавьте согласную и гласную, которые встречаются вместе.";
+    return;
+  }
   save();
   syncFooter();
-  document.getElementById("save-status").textContent = storageAvailable
+  status.textContent = storageAvailable
     ? view === "lesson"
       ? "Сохранено. Применим в следующей серии."
       : "Сохранено. Можно начинать!"
@@ -403,6 +591,18 @@ document.addEventListener("click", (e) => {
     case "close-adult":
       adultDialog.close();
       break;
+    case "upto": {
+      // Только отмечает галочки: настройки применяются кнопкой «Сохранить».
+      const id = button.dataset.letter;
+      const { letters, vowels } = CURRICULUM.upTo(id);
+      for (const input of adultDialog.querySelectorAll('input[name="letters"]'))
+        input.checked = letters.includes(input.value);
+      for (const input of adultDialog.querySelectorAll('input[name="vowels"]'))
+        input.checked = vowels.includes(input.value);
+      document.getElementById("save-status").textContent =
+        `Отмечено всё до буквы ${id}. Нажмите «Сохранить настройки».`;
+      break;
+    }
     case "pause":
       pauseDialog.showModal();
       break;
@@ -431,6 +631,13 @@ document.addEventListener("click", (e) => {
       if (!session || session.solved) return;
       session.hint = true;
       session.assisted = true;
+      renderLesson();
+      break;
+    case "reveal":
+      // Картинка к прочитанному слову — награда, а не подсказка:
+      // самостоятельность всё равно отмечает взрослый.
+      if (!session) return;
+      session.revealed = true;
       renderLesson();
       break;
     case "card-done":

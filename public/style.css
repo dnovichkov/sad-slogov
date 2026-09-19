@@ -338,6 +338,14 @@ h1 {
 .game-card:nth-child(3) .mini-icon {
   background: #e9eddb;
 }
+.game-card:nth-child(4) .mini-icon {
+  background: #e2ecef;
+  color: #3f6b73;
+}
+.game-card:nth-child(5) .mini-icon {
+  background: #f4efd9;
+  color: #8a6128;
+}
 .game-card h3 {
   font-size: 20px;
   margin-bottom: 8px;
@@ -875,7 +883,7 @@ dialog p {
   outline: 3px solid #a44d32;
   outline-offset: 3px;
 }
-/* Выбор буквы: крупная буква и её слоги мелким шрифтом под ней. */
+/* Выбор буквы: крупная буква и пояснение мелким шрифтом под ней. */
 .option .letter-mark {
   display: block;
   font-family: Arial, sans-serif;
@@ -893,6 +901,83 @@ dialog p {
 }
 .option input:checked + span small {
   color: #4a6b55;
+}
+/* Букв в алфавите много, поэтому их фишки уже обычных. */
+.setting-options.compact {
+  gap: 6px;
+}
+.setting-options.compact .option span {
+  min-width: 54px;
+  padding: 8px 8px;
+}
+.setting-options.compact .option input:checked + span {
+  padding: 7px 7px;
+}
+.setting-options.compact .option span small {
+  font-size: 9px;
+  letter-spacing: 0.02em;
+}
+
+/* Лесенка букваря: нажатие отмечает весь материал до этой буквы. */
+.letter-ladder {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px;
+}
+.ladder-step {
+  width: 34px;
+  height: 34px;
+  border: 1px solid #cfd8c6;
+  border-radius: 9px;
+  background: var(--white);
+  font-family: Arial, sans-serif;
+  font-size: 16px;
+  font-weight: 700;
+  color: var(--ink);
+}
+.ladder-step.vowel {
+  background: #f7efd9;
+  border-color: #e2d3ab;
+  color: #8a6a28;
+}
+.ladder-step:hover {
+  border-color: var(--green);
+}
+.letter-guide {
+  margin: 10px 0 12px;
+}
+.letter-guide summary {
+  cursor: pointer;
+  font-size: 12px;
+  font-weight: 700;
+  color: var(--green);
+  padding: 4px 0;
+}
+.letter-guide p {
+  margin: 8px 0 0;
+}
+
+/* Слово по слогам: чередующийся фон показывает границы слияний. */
+.read-word {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 9px;
+  margin: 26px 0 12px;
+  font-family: Arial, sans-serif;
+  font-weight: 700;
+  font-size: clamp(36px, 7vw, 58px);
+  letter-spacing: 0.04em;
+}
+.read-word span {
+  background: var(--pale);
+  border-radius: 14px;
+  padding: 8px 16px;
+  color: var(--green);
+}
+.read-word span:nth-child(even) {
+  background: #f6ead4;
+  color: #8a6128;
 }
 .setting-note {
   font-size: 11px;

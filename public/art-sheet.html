@@ -98,10 +98,11 @@
   <body>
     <h1>Лист иллюстраций</h1>
     <p class="lead">
-      Все рисунки слов из <code>art.js</code> рядом со словами из
-      <code>curriculum.js</code>. Здесь удобно сверять стиль и ловить
-      перепутанные ключи. Метка над словом — слоги, которым оно учит; оранжевая
-      означает безударную «О», объявленную через <code>unstressed</code>.
+      Все слова из <code>curriculum.js</code> с рисунками из <code>art.js</code>.
+      Здесь удобно сверять стиль и ловить перепутанные ключи. Слово напечатано
+      по слогам — так же, как в игре «Прочитай слово». Метки под словом —
+      слоги, которым оно учит, и место слога в слове; оранжевая означает
+      безударную гласную, возвращённую четвёртым полем.
     </p>
     <div id="sheet"></div>
     <script src="curriculum.js"></script>
@@ -110,40 +111,60 @@
       "use strict";
       const sheet = document.getElementById("sheet");
       const parts = [];
+      const shown = new Set();
+
+      const card = (w) => {
+        const missing = w.art && !ART.has(w.art);
+        const tags = w.teaches
+          .map(
+            (s) =>
+              `<span class="tag ${(w.also || []).includes(s) ? "weak" : ""}">${s}@${w.at[s]}</span>`,
+          )
+          .join("");
+        const body = !w.art
+          ? '<p style="text-align:center;color:#667269">без рисунка —<br>показывается текстом</p>'
+          : missing
+            ? `<p style="text-align:center">нет рисунка<br><code>${w.art}</code></p>`
+            : ART.word(w.art);
+        return `<figure class="${missing ? "problem" : ""}">${body}<figcaption><b>${w.split}</b><span>${w.spoken}${w.art ? " · " + w.art : ""}</span>${tags}</figcaption></figure>`;
+      };
 
       for (const letter of CURRICULUM.letters) {
-        const syllables = CURRICULUM.syllablesOf(letter.id);
-        // Слово показываем у той буквы, чей слог оно учит первым по порядку.
-        const words = CURRICULUM.words.filter((w) =>
-          w.teaches.some((s) => syllables.includes(s)),
+        // Слово показываем у первой буквы, чьему слогу оно учит.
+        const words = CURRICULUM.words.filter(
+          (w) =>
+            !shown.has(w.word) &&
+            w.teaches.some((s) => s[0] === letter.id),
         );
+        for (const w of words) shown.add(w.word);
+        if (!words.length) continue;
         parts.push(
-          `<h2>${letter.id} — ${syllables.join(", ")} · «${letter.sound}»</h2><div class="grid">` +
-            words
-              .map((w) => {
-                const missing = !ART.has(w.art);
-                const tags = w.teaches
-                  .map(
-                    (s) =>
-                      `<span class="tag ${(w.unstressed || []).includes(s) ? "weak" : ""}">${s}@${w.at[s]}</span>`,
-                  )
-                  .join("");
-                return `<figure class="${missing ? "problem" : ""}">${
-                  missing
-                    ? `<p style="text-align:center">нет рисунка<br><code>${w.art}</code></p>`
-                    : ART.word(w.art)
-                }<figcaption><b>${w.word}</b><span>${w.spoken} · ${w.art}</span>${tags}</figcaption></figure>`;
-              })
-              .join("") +
-            `</div>`,
+          `<h2>${letter.id} — ${CURRICULUM.syllablesOf(letter.id).join(", ")} · «${letter.sound}»</h2>` +
+            `<div class="grid">${words.map(card).join("")}</div>`,
         );
       }
+
+      const rest = CURRICULUM.words.filter((w) => !shown.has(w.word));
+      if (rest.length)
+        parts.push(
+          `<h2>Только для чтения — слогам курса не учат</h2>` +
+            `<div class="grid">${rest.map(card).join("")}</div>`,
+        );
 
       const used = new Set(CURRICULUM.words.map((w) => w.art));
       const orphans = ART.keys().filter((k) => !used.has(k));
       if (orphans.length)
         parts.push(
           `<h2>Рисунки без слова</h2><ul>${orphans.map((k) => `<li>${k}</li>`).join("")}</ul>`,
+        );
+
+      const noWord = CURRICULUM.syllables.filter(
+        (s) => !CURRICULUM.wordsFor(s).length,
+      );
+      if (noWord.length)
+        parts.push(
+          `<h2>Слоги без слова (${noWord.length})</h2><ul><li>${noWord.join(" · ")}</li>` +
+            `<li>Читаются в карточках и в соединении букв; в поиске слога не встречаются.</li></ul>`,
         );
 
       sheet.innerHTML = parts.join("");

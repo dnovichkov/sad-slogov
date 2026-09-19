@@ -1,9 +1,9 @@
 /**
  * Проверка исходников и учебного материала: npm run check.
  *
- * Ловит то, что молча ломает занятие, а не страницу:
- * опечатку в ключе рисунка, слог без слов, слово с безударной «О»
- * (в речи она звучит как [а], и ребёнок не услышит нужный слог).
+ * Ловит то, что молча ломает занятие, а не страницу: слог, которого нет
+ * в русском языке; слово с безударной «О»; латинскую «C» вместо кириллической;
+ * опечатку в ключе рисунка; незакрытый тег в SVG.
  */
 import { readFileSync, readdirSync } from "node:fs";
 import { join } from "node:path";
@@ -14,7 +14,6 @@ const errors = [];
 const notes = [];
 const fail = (message) => errors.push(message);
 
-/** Загружает обычный (не модульный) скрипт из public/ и отдаёт его глобальную константу. */
 function load(file, name) {
   const source = readFileSync(join("public", file), "utf8");
   try {
@@ -49,93 +48,101 @@ if (!CURRICULUM || !ART) {
   process.exit(1);
 }
 
-// --- 2. Буквы и слоги ---
-const vowels = new Set(CURRICULUM.vowels);
-const seenLetters = new Set();
-for (const letter of CURRICULUM.letters) {
+// --- 2. Алфавит ---
+const ids = new Set();
+const vowelIds = new Set(CURRICULUM.vowelIds);
+for (const letter of CURRICULUM.alphabet) {
   const where = `буква ${letter.id}`;
-  if (seenLetters.has(letter.id)) fail(`${where}: повторяется в списке`);
-  seenLetters.add(letter.id);
-  if (letter.id.length !== 1) fail(`${where}: id должен быть одной буквой`);
-  if (!letter.vowels?.length) fail(`${where}: не указаны гласные`);
-  if (!letter.sound) fail(`${where}: не указано, как тянуть звук (sound)`);
-  if (!letter.tip) fail(`${where}: нет подсказки взрослому (tip)`);
-  for (const v of letter.vowels || [])
-    if (!vowels.has(v)) fail(`${where}: гласная ${v} не описана в VOWELS`);
+  if (ids.has(letter.id)) fail(`${where}: повторяется в алфавите`);
+  ids.add(letter.id);
+  if ([...letter.id].length !== 1) fail(`${where}: id должен быть одной буквой`);
+  if (!["vowel", "consonant", "semivowel", "sign"].includes(letter.kind))
+    fail(`${where}: неизвестный вид "${letter.kind}"`);
+
+  if (letter.kind === "vowel") {
+    if (!["hard", "soft"].includes(letter.row))
+      fail(`${where}: ряд должен быть hard или soft`);
+    const pair = CURRICULUM.letter(letter.pair);
+    if (!pair || pair.kind !== "vowel")
+      fail(`${where}: парная гласная "${letter.pair}" не найдена`);
+    else if (pair.pair !== letter.id)
+      fail(`${where}: пара с ${pair.id} несимметрична`);
+    else if (pair.row === letter.row)
+      fail(`${where}: пара ${pair.id} того же ряда — должна быть другого`);
+  } else if (letter.kind === "consonant") {
+    if (!letter.vowels?.length) fail(`${where}: не указаны гласные`);
+    if (!letter.sound) fail(`${where}: не указано, как звучит (sound)`);
+    if (typeof letter.hold !== "boolean")
+      fail(`${where}: не указано, можно ли тянуть звук (hold)`);
+    for (const v of letter.vowels || [])
+      if (!vowelIds.has(v)) fail(`${where}: гласная ${v} не описана в алфавите`);
+  }
+  if (!letter.tip && letter.kind !== "vowel")
+    fail(`${where}: нет подсказки взрослому (tip)`);
 }
 
+// --- 3. Слияний, которых нет в русском языке, быть не должно ---
+// Это не стилистика, а орфография: ЖЫ и ШЫ не пишутся, ГЫ/КЫ/ХЫ не бывает.
+const FORBIDDEN = [
+  "ЖЫ", "ШЫ", "ЦЯ", "ЦЮ", "ЦЁ", "ЧЯ", "ЧЮ", "ЧЫ", "ЩЯ", "ЩЮ", "ЩЫ",
+  "ГЫ", "КЫ", "ХЫ", "ЖЯ", "ЖЮ", "ШЯ", "ШЮ",
+];
 const syllables = CURRICULUM.syllables;
-if (new Set(syllables).size !== syllables.length)
-  fail("слоги повторяются в общем списке");
+const syllableSet = new Set(syllables);
+if (syllableSet.size !== syllables.length) fail("слоги повторяются");
+for (const bad of FORBIDDEN)
+  if (syllableSet.has(bad))
+    fail(`слог ${bad}: в русском языке такого сочетания нет`);
 
-// --- 3. Слова ---
+// --- 4. Слова ---
 const seenWords = new Set();
 const usedArt = new Set();
+const undrawn = new Set();
 for (const w of CURRICULUM.words) {
   const where = `слово ${w.word}`;
   if (seenWords.has(w.word)) fail(`${where}: встречается дважды`);
   seenWords.add(w.word);
 
-  if (!ART.has(w.art)) fail(`${where}: нет рисунка с ключом "${w.art}"`);
-  usedArt.add(w.art);
+  // Латинская «C» и кириллическая «С» выглядят одинаково: ловим по алфавиту.
+  for (const ch of w.word)
+    if (!ids.has(ch))
+      fail(`${where}: символ "${ch}" (U+${ch.codePointAt(0).toString(16).toUpperCase().padStart(4, "0")}) не из русского алфавита курса`);
 
-  // spoken — то же слово строчными плюс ровно один знак ударения.
+  if (!w.parts.length || w.parts.some((part) => !part))
+    fail(`${where}: пустой слог в разбивке "${w.split}"`);
+  if (w.parts.join("") !== w.word)
+    fail(`${where}: разбивка "${w.split}" не складывается в слово`);
+
+  // «Ё» в русском языке всегда ударная и знаком не помечается.
+  const hasYo = w.word.includes("Ё");
   const accents = [...w.spoken].filter((c) => c === ACCENT).length;
-  const bare = w.spoken.replaceAll(ACCENT, "");
-  if (accents !== 1)
-    fail(`${where}: в "${w.spoken}" знаков ударения ${accents}, нужен один`);
-  if (bare !== w.word.toLowerCase())
-    fail(`${where}: "${w.spoken}" не совпадает со словом без ударения`);
-  const stressedAt = w.spoken.indexOf(ACCENT) - 1;
+  if (hasYo && accents !== 0)
+    fail(`${where}: в слове есть «ё» — знак ударения не нужен`);
+  if (!hasYo && accents !== 1)
+    fail(`${where}: знаков ударения ${accents}, нужен ровно один`);
+  if (w.spoken.replaceAll(ACCENT, "") !== w.word.toLowerCase())
+    fail(`${where}: "${w.spoken}" не совпадает со словом`);
 
-  if (!w.teaches?.length) fail(`${where}: не указано, какие слоги оно учит`);
-  const declaredUnstressed = new Set(w.unstressed || []);
-
-  for (const syllable of w.teaches || []) {
-    if (!syllables.includes(syllable)) {
-      fail(`${where}: учит слогу ${syllable}, которого нет в курсе`);
-      continue;
-    }
-    const at = w.word.indexOf(syllable);
-    if (at < 0) {
-      fail(`${where}: слога ${syllable} в слове нет`);
-      continue;
-    }
-    if (!w.contains.includes(syllable))
-      fail(`${where}: ${syllable} потерялся в вычисленном списке contains`);
-
-    // Безударная «О» звучит как [а]: «соро́ка» это [сарока].
-    // Такое слово нельзя давать на слог с «О», не пометив это осознанно.
-    if (syllable[1] === "О" && stressedAt !== at + 1) {
-      if (!declaredUnstressed.has(syllable))
-        fail(
-          `${where}: «О» в ${syllable} безударная — ребёнок услышит [а]. ` +
-            `Замените слово или добавьте unstressed: ["${syllable}"].`,
-        );
-    } else if (declaredUnstressed.has(syllable)) {
-      fail(`${where}: ${syllable} помечен unstressed, но гласная ударная`);
-    }
+  if (w.art) {
+    usedArt.add(w.art);
+    if (!ART.has(w.art)) undrawn.add(w.art);
   }
-  for (const syllable of declaredUnstressed)
-    if (!w.teaches.includes(syllable))
-      fail(`${where}: ${syllable} в unstressed, но слово ему не учит`);
-}
 
-// --- 4. У каждого слога есть материал ---
-const rows = [];
-for (const syllable of syllables) {
-  const all = CURRICULUM.wordsFor(syllable);
-  const fromStart = CURRICULUM.wordsFor(syllable, true);
-  if (all.length < 2)
-    fail(
-      `слог ${syllable}: слов ${all.length}, нужно хотя бы два — иначе задания повторяются`,
-    );
-  if (!fromStart.length)
-    fail(
-      `слог ${syllable}: нет слова, которое с него начинается — ` +
-        `режим «только начало слова» останется без заданий`,
-    );
-  rows.push([syllable, all.length, fromStart.length, all.map((w) => w.word)]);
+  for (const s of w.also || []) {
+    if (!syllableSet.has(s))
+      fail(`${where}: в исключениях слог ${s}, которого нет в курсе`);
+    else if (!w.word.includes(s))
+      fail(`${where}: в исключениях слог ${s}, которого нет в слове`);
+    else if (!"ОЕЯ".includes(s[1]))
+      fail(`${where}: слог ${s} не нуждается в исключении — гласная не безударная`);
+  }
+
+  for (const s of w.teaches) {
+    if (!syllableSet.has(s)) fail(`${where}: учит слогу ${s} вне курса`);
+    if (!w.contains.includes(s))
+      fail(`${where}: ${s} потерялся в вычисленном списке contains`);
+    if (!(s in w.at)) fail(`${where}: не найдено место слога ${s}`);
+  }
 }
 
 // --- 5. Рисунки: целостность разметки ---
@@ -177,10 +184,13 @@ for (const [what, markup] of drawings) {
   if (markup.length < 200) fail(`${what}: подозрительно пустой`);
   for (const problem of svgProblems(markup)) fail(`${what}: ${problem}`);
 }
-
 for (const key of ART.keys())
   if (!usedArt.has(key))
     notes.push(`рисунок "${key}" не используется ни одним словом`);
+if (undrawn.size)
+  notes.push(
+    `ключи без рисунка (${undrawn.size}): ${[...undrawn].join(", ")} — такие слова показываются текстом`,
+  );
 
 // --- 6. index.html подключает все скрипты ---
 const html = readFileSync(join("public", "index.html"), "utf8");
@@ -190,16 +200,42 @@ for (const asset of ["style.css", "icon.svg"])
   if (!html.includes(asset)) fail(`index.html не ссылается на ${asset}`);
 
 // --- Отчёт ---
+const known = (letters, vowels) => new Set([...letters, ...vowels]);
 console.log(
-  `Букв: ${CURRICULUM.letters.length} (${CURRICULUM.letterIds.join(" ")})`,
+  `Букв: ${CURRICULUM.alphabet.length} · согласных ${CURRICULUM.letters.length}, гласных ${CURRICULUM.vowelLetters.length}, знаков ${CURRICULUM.signs.length}`,
 );
 console.log(`Слогов: ${syllables.length}   Слов: ${CURRICULUM.words.length}`);
 console.log("");
-console.log("слог   слов  с начала  примеры");
-for (const [syllable, all, fromStart, words] of rows)
+console.log("этап          гласные      слогов  со словом  с рисунком  для чтения");
+for (const upTo of ["С", "Т", "И", "Ж", "Ь", "Ё", "Ъ"]) {
+  const { letters, vowels } = CURRICULUM.upTo(upTo);
+  const pool = letters.flatMap((id) => CURRICULUM.syllablesOf(id, vowels));
+  const withWord = pool.filter((s) => CURRICULUM.wordsFor(s).length).length;
+  const withArt = pool.filter((s) =>
+    CURRICULUM.wordsFor(s).some((w) => w.art && ART.has(w.art)),
+  ).length;
+  const alphabet = known(letters, vowels);
+  const readable = CURRICULUM.words.filter((w) =>
+    [...w.word].every((c) => alphabet.has(c)),
+  ).length;
   console.log(
-    `${syllable.padEnd(6)} ${String(all).padStart(4)}  ${String(fromStart).padStart(8)}  ${words.join(", ")}`,
+    `до ${upTo}`.padEnd(14) +
+      vowels.join("").padEnd(12) +
+      String(pool.length).padStart(5) +
+      String(withWord).padStart(10) +
+      String(withArt).padStart(11) +
+      String(readable).padStart(11),
   );
+}
+
+const noWords = syllables.filter((s) => !CURRICULUM.wordsFor(s).length);
+if (noWords.length) {
+  console.log("");
+  console.log(
+    `Слоги без слова (${noWords.length}): ${noWords.join(" ")}\n` +
+      "  Читаются в карточках и в соединении букв; в поиске слога не встречаются.",
+  );
+}
 
 if (notes.length) {
   console.log("");
