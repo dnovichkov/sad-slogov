@@ -24,9 +24,8 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: "22"
-      - name: Проверка исходников и учебного материала
-        run: npm run check
-      - name: Сборка
+      # npm run build — это проверка материала, тест занятия и сборка.
+      - name: Проверка и сборка
         run: npm run build
       - uses: actions/configure-pages@v5
       - uses: actions/upload-pages-artifact@v3
