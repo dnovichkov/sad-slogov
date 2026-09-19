@@ -47,7 +47,7 @@
     <main id="main" tabindex="-1"></main>
     <footer class="site-footer">
       <span>Растём в своём темпе <span aria-hidden="true">✳</span></span
-      ><span>Знакомые слоги · СА, СУ, СО</span>
+      ><span id="footer-material">Буквы занятия</span>
     </footer>
     <dialog id="adult-dialog" aria-labelledby="adult-title"></dialog>
     <dialog id="pause-dialog" aria-labelledby="pause-title">
@@ -70,6 +70,10 @@
         Для игры нужно включить JavaScript в браузере.
       </p></noscript
     >
+    <!-- Порядок важен: app.js использует CURRICULUM и ART.
+         defer сохраняет порядок выполнения. -->
+    <script src="curriculum.js" defer></script>
+    <script src="art.js" defer></script>
     <script src="app.js" defer></script>
   </body>
 </html>

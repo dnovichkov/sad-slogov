@@ -193,6 +193,8 @@ h1 {
   display: flex;
   gap: 9px;
   align-items: center;
+  /* Слогов столько, сколько выбрано букв: на узком экране переносим. */
+  flex-wrap: wrap;
   margin: 0 0 30px;
 }
 .known-syllables span {
@@ -872,6 +874,25 @@ dialog p {
 .option input:focus-visible + span {
   outline: 3px solid #a44d32;
   outline-offset: 3px;
+}
+/* Выбор буквы: крупная буква и её слоги мелким шрифтом под ней. */
+.option .letter-mark {
+  display: block;
+  font-family: Arial, sans-serif;
+  font-size: 22px;
+  font-weight: 700;
+  line-height: 1.1;
+}
+.option span small {
+  display: block;
+  margin-top: 4px;
+  font-size: 11px;
+  font-weight: 400;
+  letter-spacing: 0.06em;
+  color: var(--muted);
+}
+.option input:checked + span small {
+  color: #4a6b55;
 }
 .setting-note {
   font-size: 11px;
