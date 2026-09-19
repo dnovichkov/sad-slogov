@@ -926,11 +926,12 @@ dialog p {
 .letter-ladder {
   display: flex;
   flex-wrap: wrap;
-  gap: 5px;
+  gap: 6px;
 }
 .ladder-step {
-  width: 34px;
-  height: 34px;
+  /* Нажимает взрослый, но 33 кнопки подряд — цель должна быть крупной. */
+  width: 40px;
+  height: 40px;
   border: 1px solid #cfd8c6;
   border-radius: 9px;
   background: var(--white);
