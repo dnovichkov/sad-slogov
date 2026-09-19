@@ -1,0 +1,15 @@
+{
+  "name": "sad-slogov",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "node dev-server.mjs",
+    "build": "node --check public/app.js && node build.mjs",
+    "preview": "node dev-server.mjs --dir dist"
+  },
+  "description": "Тренажёр чтения: СА, СУ, СО. Статический сайт.",
+  "engines": {
+    "node": ">=18"
+  }
+}

@@ -1,0 +1,75 @@
+<!doctype html>
+<html lang="ru">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="theme-color" content="#f7f7ef" />
+    <meta name="robots" content="noindex,nofollow" />
+    <meta
+      name="description"
+      content="Маленькие шаги в чтении: играем со слогами СА, СУ, СО вместе со взрослым."
+    />
+    <title>Сад слогов — играем и читаем</title>
+    <link rel="icon" href="icon.svg" type="image/svg+xml" />
+    <link rel="stylesheet" href="style.css" />
+  </head>
+  <body>
+    <a class="skip" href="#main">Перейти к занятию</a>
+    <header class="site-header">
+      <button
+        class="brand"
+        data-action="home"
+        aria-label="Сад слогов — главная"
+      >
+        <span class="brand-icon" aria-hidden="true">✳</span
+        ><span
+          >сад слогов<span class="brand-caption"
+            >маленькие шаги в чтении</span
+          ></span
+        >
+      </button>
+      <div class="header-right">
+        <span class="session-label"
+          ><svg viewBox="0 0 24 24" aria-hidden="true">
+            <path
+              d="M12 6C8 3 4 4 3 5v14c3-2 6-2 9 0 3-2 6-2 9 0V5c-3-2-6-2-9 1Z"
+            />
+            <path d="M12 6v13" /></svg
+          >Читаем вместе</span
+        ><button class="adult-button" data-action="adult">
+          <svg viewBox="0 0 24 24" aria-hidden="true">
+            <circle cx="12" cy="8" r="3" />
+            <path d="M5 21v-3a7 7 0 0 1 14 0v3" /></svg
+          >Взрослому
+        </button>
+      </div>
+    </header>
+    <main id="main" tabindex="-1"></main>
+    <footer class="site-footer">
+      <span>Растём в своём темпе <span aria-hidden="true">✳</span></span
+      ><span>Знакомые слоги · СА, СУ, СО</span>
+    </footer>
+    <dialog id="adult-dialog" aria-labelledby="adult-title"></dialog>
+    <dialog id="pause-dialog" aria-labelledby="pause-title">
+      <button class="close-button" data-action="resume" aria-label="Закрыть">
+        ×
+      </button>
+      <div class="pause-sun" aria-hidden="true">☀</div>
+      <h2 id="pause-title">Немного отдохнём?</h2>
+      <p>
+        Можно потянуться, обняться или закончить на сегодня. Задание подождёт.
+      </p>
+      <button class="primary wide" data-action="resume">
+        Продолжить игру <span aria-hidden="true">→</span></button
+      ><button class="text-button wide" data-action="end">
+        Закончить занятие
+      </button>
+    </dialog>
+    <noscript
+      ><p class="noscript">
+        Для игры нужно включить JavaScript в браузере.
+      </p></noscript
+    >
+    <script src="app.js" defer></script>
+  </body>
+</html>
