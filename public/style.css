@@ -1000,7 +1000,9 @@ dialog p {
   background: #f6ead4;
   color: #8a6128;
 }
-.sentence-word > .tail {
+/* span.tail, а не .tail: иначе :nth-child(even) выше по специфичности
+   и знак препинания получает фон слога. */
+.sentence-word > span.tail {
   background: none;
   padding: 4px 0;
   color: var(--ink);
