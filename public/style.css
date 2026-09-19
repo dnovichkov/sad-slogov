@@ -350,6 +350,10 @@ h1 {
   background: #eee6ee;
   color: #6b4f6b;
 }
+.game-card:nth-child(7) .mini-icon {
+  background: #e6ede4;
+  color: #4a6b4f;
+}
 .game-card h3 {
   font-size: 20px;
   margin-bottom: 8px;
@@ -962,6 +966,46 @@ dialog p {
   margin: 8px 0 0;
 }
 
+/* Предложение и короткий текст: слова разделены пробелом,
+   слоги внутри слова — цветом, как в игре «Прочитай слово». */
+.sentence-block {
+  margin: 22px 0 12px;
+}
+.sentence {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  align-items: baseline;
+  gap: 6px 16px;
+  margin: 0 0 10px;
+  font-family: Arial, sans-serif;
+  font-weight: 700;
+  font-size: clamp(24px, 4.6vw, 38px);
+  letter-spacing: 0.03em;
+}
+.sentence:last-child {
+  margin-bottom: 0;
+}
+.sentence-word {
+  display: inline-flex;
+  gap: 3px;
+}
+.sentence-word > span {
+  background: var(--pale);
+  border-radius: 9px;
+  padding: 4px 9px;
+  color: var(--green);
+}
+.sentence-word > span:nth-child(even) {
+  background: #f6ead4;
+  color: #8a6128;
+}
+.sentence-word > .tail {
+  background: none;
+  padding: 4px 0;
+  color: var(--ink);
+}
+
 /* Слоги, где чаще нужна помощь: счёт виден взрослому. */
 .hard-syllables {
   display: flex;
@@ -1049,6 +1093,9 @@ dialog p {
 .history h3 {
   font-size: 15px;
   letter-spacing: 0;
+}
+.history h3:not(:first-child) {
+  margin-top: 20px;
 }
 .history p {
   font-size: 12px;

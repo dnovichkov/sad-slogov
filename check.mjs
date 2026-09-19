@@ -145,6 +145,27 @@ for (const w of CURRICULUM.words) {
   }
 }
 
+// --- 4б. Предложения и короткие тексты ---
+const seenTexts = new Set();
+for (const t of CURRICULUM.texts) {
+  const where = `текст «${t.source}»`;
+  if (seenTexts.has(t.source)) fail(`${where}: встречается дважды`);
+  seenTexts.add(t.source);
+  if (t.strange.length)
+    fail(
+      `${where}: посторонние символы ${t.strange.map((c) => `"${c}"`).join(", ")} — буквы должны быть прописными и из русского алфавита`,
+    );
+  if (!t.sentences.length) fail(`${where}: не разобрался на предложения`);
+  for (const line of t.sentences)
+    for (const w of line) {
+      if (!w.parts.length || w.parts.some((part) => !part))
+        fail(`${where}: пустой слог в слове «${w.word}»`);
+      if (w.word !== w.parts.join(""))
+        fail(`${where}: разбивка слова «${w.word}» не складывается`);
+    }
+  if (!t.letters.length) fail(`${where}: нет ни одной буквы`);
+}
+
 // --- 5. Рисунки: целостность разметки ---
 /**
  * Рисунки собираются склейкой строк, поэтому обычные ошибки здесь —
@@ -204,9 +225,13 @@ const known = (letters, vowels) => new Set([...letters, ...vowels]);
 console.log(
   `Букв: ${CURRICULUM.alphabet.length} · согласных ${CURRICULUM.letters.length}, гласных ${CURRICULUM.vowelLetters.length}, знаков ${CURRICULUM.signs.length}`,
 );
-console.log(`Слогов: ${syllables.length}   Слов: ${CURRICULUM.words.length}`);
+console.log(
+  `Слогов: ${syllables.length}   Слов: ${CURRICULUM.words.length}   Предложений и текстов: ${CURRICULUM.texts.length}`,
+);
 console.log("");
-console.log("этап          гласные      слогов  со словом  с рисунком  для чтения");
+console.log(
+  "этап          гласные      слогов  со словом  с рисунком  для чтения  предложений",
+);
 for (const upTo of ["С", "Т", "И", "Ж", "Ь", "Ё", "Ъ"]) {
   const { letters, vowels } = CURRICULUM.upTo(upTo);
   const pool = letters.flatMap((id) => CURRICULUM.syllablesOf(id, vowels));
@@ -224,7 +249,8 @@ for (const upTo of ["С", "Т", "И", "Ж", "Ь", "Ё", "Ъ"]) {
       String(pool.length).padStart(5) +
       String(withWord).padStart(10) +
       String(withArt).padStart(11) +
-      String(readable).padStart(11),
+      String(readable).padStart(11) +
+      String(CURRICULUM.textsFor(alphabet).length).padStart(12),
   );
 }
 

@@ -210,6 +210,7 @@ function plan() {
     read: CURRICULUM.words.filter((w) =>
       [...w.word].every((c) => known.has(c)),
     ),
+    sentence: CURRICULUM.textsFor(known),
   };
 }
 
@@ -257,6 +258,16 @@ const GAMES = [
     icon: () =>
       ART.svg(
         '<g fill="currentColor"><rect x="4" y="12" width="14" height="12" rx="3"/><rect x="22" y="12" width="14" height="12" rx="3"/></g>',
+        "0 0 40 36",
+      ),
+  },
+  {
+    id: "sentence",
+    title: () => "Прочитай предложение",
+    hint: () => "Целая мысль: слово за словом.",
+    icon: () =>
+      ART.svg(
+        '<g fill="currentColor"><rect x="4" y="10" width="14" height="6" rx="3"/><rect x="21" y="10" width="15" height="6" rx="3"/><rect x="4" y="21" width="19" height="6" rx="3"/><rect x="26" y="21" width="6" height="6" rx="3"/></g>',
         "0 0 40 36",
       ),
   },
@@ -357,7 +368,10 @@ function start(mode = "mixed") {
   // чтобы внутри серии поменьше повторяться. Слоги упорядочены с оглядкой
   // на прошлые занятия, слова для чтения — просто случайно.
   const queues = Object.fromEntries(
-    ids.map((id) => [id, id === "read" ? shuffle(p[id]) : weightedOrder(p[id])]),
+    ids.map((id) => [
+      id,
+      ["read", "sentence"].includes(id) ? shuffle(p[id]) : weightedOrder(p[id]),
+    ]),
   );
   const taken = Object.fromEntries(ids.map((id) => [id, 0]));
   const next = (id) => {
@@ -371,6 +385,7 @@ function start(mode = "mixed") {
     queue: Array.from({ length: prefs.length }, (_, i) => {
       const type = ids[i % ids.length];
       if (type === "read") return { type, word: next("read") };
+      if (type === "sentence") return { type, text: next("sentence") };
 
       const target = next(type);
       const q = { type, target, prompt: prefs.prompt, position: prefs.position };
@@ -420,6 +435,8 @@ function helpText(q) {
       : `Взрослому: этот звук тянуть нельзя — произнесите слог одним движением, «${q.target.toLowerCase()}», а не «${letter.id.toLowerCase()}… ${q.target[1].toLowerCase()}». ${letter.tip}`;
   if (q.type === "reverse")
     return `Взрослому: обратный слог читается не так, как прямой: сначала тянем гласную, потом добавляем согласную. Сравните вслух «${(q.target[1] + q.target[0]).toLowerCase()}» и «${q.target.toLowerCase()}» — это разные слоги.`;
+  if (q.type === "sentence")
+    return "Взрослому: не торопите. Если слово не далось — прочитайте его вместе, а потом вернитесь к началу предложения: так слышно мысль целиком, а не набор слов.";
   if (q.type === "read")
     return "Взрослому: пусть ребёнок ведёт пальцем и читает слог за слогом, а не по буквам. Подскажите первый слог, если нужно, и не торопите.";
   if (q.type === "soft")
@@ -455,6 +472,19 @@ function renderLesson(focus = false) {
   } else if (q.type === "read") {
     const picture = drawn(q.word);
     body = `<p class="exercise-kicker">Прочитай слово</p><h1 tabindex="-1">Читаем по слогам</h1><p class="task-description">Веди пальчиком и читай слог за слогом.</p><div class="read-word" aria-label="${q.word.word.toLowerCase()}">${q.word.parts.map((part) => `<span>${part}</span>`).join("")}</div>${session.revealed && picture ? `<div class="picture-wrap" role="img" aria-label="${q.word.word.toLowerCase()}">${ART.word(q.word.art)}</div>` : ""}<p class="parent-caption">Взрослому: послушайте и отметьте, как получилось.</p>${picture && !session.revealed ? '<div class="action-row"><button class="text-button" data-action="reveal">Посмотреть, что это <span aria-hidden="true">↓</span></button></div>' : ""}${adultMarks}`;
+  } else if (q.type === "sentence") {
+    const text = q.text;
+    body = `<p class="exercise-kicker">${text.sentences.length > 1 ? "Прочитай текст" : "Прочитай предложение"}</p><h1 tabindex="-1">Читаем по слогам</h1><p class="task-description">Веди пальчиком: слово за словом, слог за слогом.</p><div class="sentence-block" role="group" aria-label="${text.plain.toLowerCase()}">${text.sentences
+      .map(
+        (line) =>
+          `<p class="sentence">${line
+            .map(
+              (w) =>
+                `<span class="sentence-word">${w.parts.map((part) => `<span>${part}</span>`).join("")}${w.tail ? `<span class="tail">${w.tail}</span>` : ""}</span>`,
+            )
+            .join("")}</p>`,
+      )
+      .join("")}</div><p class="parent-caption">Взрослому: послушайте и отметьте, как получилось.</p>${adultMarks}`;
   } else if (q.type === "soft") {
     body = `<p class="exercise-kicker">Твёрдый или мягкий?</p><h1 tabindex="-1">Какой слог назвали?</h1><p class="task-description">Послушай взрослого и выбери карточку.</p><p class="listen-word">Взрослому: произнесите <strong>«${q.target.toLowerCase()}»</strong> один раз.</p><div class="choice-row">${q.options.map((s) => `<button class="choice ${session.solved && s === q.target ? "correct" : ""} ${session.lastWrong === s ? "retry" : ""}" data-action="answer" data-value="${s}" aria-label="Слог ${s}" ${session.solved ? "disabled" : ""}>${s}</button>`).join("")}</div>${feedback(q)}${session.hint && !session.solved ? `<div class="hint-box">Произнесите оба подряд и сравните: <strong>${q.options.join(" — ")}</strong>. В мягком слоге согласная звучит мягче.</div>` : ""}<div class="action-row">${session.solved ? next : '<button class="text-button" data-action="hint">Помоги мне</button>'}</div>`;
   } else {
@@ -503,7 +533,7 @@ function answer(value, isVowel = false) {
 
 /** Игры, где результат отмечает взрослый, а не проверяет интерфейс. */
 const adultJudged = (type) =>
-  ["card", "read", "reverse"].includes(type);
+  ["card", "read", "reverse", "sentence"].includes(type);
 
 function finishQuestion(help = false) {
   if (view !== "lesson") return;
@@ -511,7 +541,7 @@ function finishQuestion(help = false) {
   if (!adultJudged(q.type) && !session.solved) return;
   const assisted = help || session.assisted;
   session.results.push({
-    target: q.target || q.word.word,
+    target: q.target || q.word?.word || q.text.plain,
     type: q.type,
     help: assisted,
     attempts: session.attempts,
@@ -548,9 +578,14 @@ function complete(partial = false) {
   // Обратных слогов нет в общем списке курса, поэтому берём то,
   // что реально встретилось в серии, в порядке появления.
   const bySyllable = [
-    ...new Set(results.filter((r) => r.type !== "read").map((r) => r.target)),
+    ...new Set(
+      results
+        .filter((r) => !["read", "sentence"].includes(r.type))
+        .map((r) => r.target),
+    ),
   ];
   const readWords = results.filter((r) => r.type === "read");
+  const readTexts = results.filter((r) => r.type === "sentence");
   view = "summary";
   main.innerHTML = `<section class="lesson"><div class="lesson-bar"><button class="back-button" data-action="home">← К играм</button><span class="step-count">${completed} из ${total} заданий</span></div><div class="exercise"><div class="summary-art">${ART.summary(completed)}</div><p class="exercise-kicker">${completed ? "Маленький шаг сделан" : "Занятие подождёт"}</p><h1 tabindex="-1">${completed ? "Твой сад растёт!" : "Отдохнём и вернёмся"}</h1><p class="summary-text">${completed ? "Здорово потрудились вместе. Теперь можно отдохнуть — можно вернуться в сад, когда захочется." : "Сегодня можно просто рассмотреть карточки вместе. Начнём, когда будет настроение."}</p><div class="action-row"><button class="primary small-primary" data-action="home">На сегодня всё <span aria-hidden="true">✓</span></button>${completed ? `<button class="secondary" data-action="start" data-mode="${mode}">Ещё одна серия</button>` : ""}</div>${
     completed
@@ -566,6 +601,10 @@ function complete(partial = false) {
         }${
           readWords.length
             ? `<p>Прочитано слов: ${readWords.map((r) => `<strong>${r.target}</strong>${r.help ? " (вместе)" : ""}`).join(", ")}.</p>`
+            : ""
+        }${
+          readTexts.length
+            ? `<p>Прочитано предложений: ${readTexts.length}. ${readTexts.map((r) => `«${r.target}»${r.help ? " (вместе)" : ""}`).join(" ")}</p>`
             : ""
         }<p class="completed-message">Это наблюдение за занятием, а не оценка навыка. Чтение вслух отмечает взрослый.</p></details>`
       : ""
@@ -596,7 +635,7 @@ function showAdult() {
   const p = plan();
   const hard = hardSyllables();
   const letterChip = (l) =>
-    `<label class="option"><input type="checkbox" name="letters" value="${l.id}" ${prefs.letters.includes(l.id) ? "checked" : ""}><span class="chip"><b class="letter-mark">${l.id}</b><small>${l.kind === "consonant" ? `${CURRICULUM.syllablesOf(l.id, prefs.vowels).length} слог.` : "без слога"}</small></span></label>`;
+    `<label class="option"><input type="checkbox" name="letters" value="${l.id}" ${prefs.letters.includes(l.id) ? "checked" : ""}><span class="chip"><b class="letter-mark">${l.id}</b><small>${l.kind === "consonant" ? (() => { const n = CURRICULUM.syllablesOf(l.id, prefs.vowels).length; return `${n} ${plural(n, "слог", "слога", "слогов")}`; })() : "без слога"}</small></span></label>`;
   const vowelChip = (l) =>
     `<label class="option"><input type="checkbox" name="vowels" value="${l.id}" ${prefs.vowels.includes(l.id) ? "checked" : ""}><span class="chip"><b class="letter-mark">${l.id}</b><small>${l.row === "soft" ? "мягкая" : "твёрдая"}</small></span></label>`;
 

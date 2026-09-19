@@ -236,6 +236,28 @@ function launch(storage = {}, { denyWrites = false } = {}) {
             continue;
           }
 
+          if (q.type === "sentence") {
+            ok(!!q.text, `${where}: нет текста`);
+            const unknown = q.text.letters.filter((c) => !known.has(c));
+            ok(
+              unknown.length === 0,
+              `${where}: непройденные буквы ${unknown.join("")} в «${q.text.source}»`,
+            );
+            equal(
+              q.text.strange.length,
+              0,
+              `${where}: посторонние символы в «${q.text.source}»`,
+            );
+            ok(q.text.sentences.length > 0, `${where}: пустой текст`);
+            for (const line of q.text.sentences)
+              for (const w of line)
+                ok(
+                  w.parts.length > 0 && w.parts.every(Boolean),
+                  `${where}: пустой слог в слове «${w.word}»`,
+                );
+            continue;
+          }
+
           if (q.type === "reverse") {
             ok(!q.options, `${where}: у обратного слога нет вариантов`);
             // Гласная впереди, и только та, что бывает в обратном слоге:
@@ -643,6 +665,47 @@ function launch(storage = {}, { denyWrites = false } = {}) {
   ok(html.includes("Согласные и знаки"), "есть выбор согласных");
   ok(html.includes("Гласные"), "есть выбор гласных");
   ok(html.includes("letter-guide"), "подсказки по буквам свёрнуты в details");
+}
+
+// --- 13б. Предложения и короткие тексты ---
+{
+  const app = launch();
+  // На самых первых буквах предложения уже есть, но текстов ещё нет.
+  app.settings({ letters: ["М", "С"], vowels: ["А", "У", "О"] });
+  equal(app.plan().sentence.length, 0, "до Ы предложений ещё нет");
+
+  const upToT = app.CURRICULUM.upTo("Т");
+  app.settings({ letters: upToT.letters, vowels: upToT.vowels, length: "3" });
+  const available = app.plan().sentence;
+  ok(available.length > 0, "после Т предложения появляются");
+  ok(
+    available.some((t) => t.sentences.length > 1),
+    "среди них есть короткие тексты",
+  );
+
+  app.click("start", { mode: "sentence" });
+  const q = app.session.queue[0];
+  ok(app.html().includes("sentence-block"), "текст показан отдельным блоком");
+  ok(
+    app.html().includes(q.text.sentences.length > 1 ? "Прочитай текст" : "Прочитай предложение"),
+    "заголовок соответствует длине",
+  );
+  for (const part of q.text.sentences[0][0].parts)
+    ok(app.html().includes(`<span>${part}</span>`), `слог ${part} показан`);
+  app.click("card-done", { help: "no" });
+  equal(app.session.index, 1, "задание засчитано без выбора варианта");
+  ok(
+    !Object.keys(app.stats).length,
+    "предложение не попадает в счёт по слогам",
+  );
+
+  app.click("card-done", { help: "yes" });
+  app.click("card-done", { help: "no" });
+  equal(app.view, "summary", "серия из предложений доходит до итога");
+  ok(
+    app.html().includes("Прочитано предложений: 3"),
+    "в отчёте взрослому есть строка про предложения",
+  );
 }
 
 // --- 14. Трудные слоги запоминаются и выпадают чаще ---
