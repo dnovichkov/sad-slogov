@@ -108,7 +108,8 @@ function launch(storage = {}, { denyWrites = false } = {}) {
   get session() { return session },
   get prefs() { return prefs },
   get history() { return history },
-  CURRICULUM, ART, OPTION_COUNT, LENGTHS, STORE, plan, GAMES,
+  get stats() { return stats },
+  CURRICULUM, ART, OPTION_COUNT, LENGTHS, STORE, plan, GAMES, weightOf,
 })`,
     context,
     { filename: "app-under-test.js" },
@@ -131,6 +132,10 @@ function launch(storage = {}, { denyWrites = false } = {}) {
     get history() {
       return api.history;
     },
+    get stats() {
+      return api.stats;
+    },
+    weightOf: api.weightOf,
     CURRICULUM: api.CURRICULUM,
     ART: api.ART,
     OPTION_COUNT: api.OPTION_COUNT,
@@ -321,6 +326,22 @@ function launch(storage = {}, { denyWrites = false } = {}) {
                   !q.word.contains.includes(option),
                   `${where}: вариант ${option} тоже есть в слове ${q.word.word}`,
                 );
+            // Смешанная стратегия: если сосед по согласной или по гласной
+            // вообще доступен, он обязан оказаться среди вариантов.
+            const free = pool.filter(
+              (s) => s !== q.target && !q.word.contains.includes(s),
+            );
+            const others = q.options.filter((s) => s !== q.target);
+            if (free.some((s) => s[0] === q.target[0]))
+              ok(
+                others.some((s) => s[0] === q.target[0]),
+                `${where}: нет соседа по согласной среди ${others.join("/")}`,
+              );
+            if (free.some((s) => s[1] === q.target[1]) && others.length > 1)
+              ok(
+                others.some((s) => s[1] === q.target[1]),
+                `${where}: нет соседа по гласной среди ${others.join("/")}`,
+              );
             if (position === "start")
               equal(
                 q.word.at[q.target],
@@ -622,6 +643,86 @@ function launch(storage = {}, { denyWrites = false } = {}) {
   ok(html.includes("Согласные и знаки"), "есть выбор согласных");
   ok(html.includes("Гласные"), "есть выбор гласных");
   ok(html.includes("letter-guide"), "подсказки по буквам свёрнуты в details");
+}
+
+// --- 14. Трудные слоги запоминаются и выпадают чаще ---
+{
+  const app = launch();
+  app.settings({ letters: ["М"], vowels: ["А", "У", "О"], length: "3" });
+  app.click("start", { mode: "card" });
+  const first = app.session.queue[0].target;
+  app.click("card-done", { help: "yes" });
+  equal(app.stats[first]?.seen, 1, `${first}: встреча записана`);
+  equal(app.stats[first]?.help, 1, `${first}: помощь записана`);
+  const second = app.session.queue[1].target;
+  app.click("card-done", { help: "no" });
+  equal(app.stats[second]?.help, 0, `${second}: самостоятельное чтение без пометки`);
+  ok(
+    app.weightOf(first) > app.weightOf("НЕТ"),
+    "слог с помощью весит больше незнакомого",
+  );
+  ok(
+    app.weightOf(second) < app.weightOf("НЕТ"),
+    "слог без помощи весит меньше незнакомого",
+  );
+}
+
+{
+  // Слог, с которым всегда нужна помощь, должен выпадать заметно чаще,
+  // но не вытеснять остальные совсем.
+  const seeded = JSON.stringify({
+    prefs: {
+      letters: ["М"],
+      vowels: ["А", "У", "О", "Ы"],
+      length: 3,
+      prompt: "picture",
+      position: "any",
+    },
+    history: [],
+    stats: { МЫ: { seen: 10, help: 10 } },
+  });
+  const app = launch({ "sad-slogov-v3": seeded });
+  equal(app.stats["МЫ"]?.help, 10, "статистика прочитана из хранилища");
+
+  const runs = 300;
+  const firstCount = {};
+  const everSeen = new Set();
+  for (let i = 0; i < runs; i++) {
+    app.click("start", { mode: "card" });
+    const head = app.session.queue[0].target;
+    firstCount[head] = (firstCount[head] || 0) + 1;
+    for (const q of app.session.queue) everSeen.add(q.target);
+  }
+  const share = (firstCount["МЫ"] || 0) / runs;
+  ok(
+    share > 0.35 && share < 0.7,
+    `МЫ первым в ${Math.round(share * 100)}% серий — ждали заметно больше равномерных 25%`,
+  );
+  for (const syllable of ["МА", "МУ", "МО"])
+    ok(everSeen.has(syllable), `${syllable} всё равно встречается в сериях`);
+}
+
+// --- 15. Мусор в статистике и её очистка ---
+{
+  const app = launch({
+    "sad-slogov-v3": JSON.stringify({
+      prefs: { letters: ["М"], vowels: ["А"], length: 3 },
+      history: [],
+      stats: {
+        МА: { seen: 3, help: 1 },
+        МУ: { seen: 1, help: 5 },
+        "СЛИШКОМ-ДЛИННЫЙ": { seen: 2, help: 1 },
+        МО: "мусор",
+        МЫ: { seen: -2, help: 0 },
+      },
+    }),
+  });
+  equal(Object.keys(app.stats).join(), "МА", "оставлена только корректная запись");
+
+  app.click("adult");
+  ok(app.dialog().includes("Трудные слоги"), "в настройках есть раздел про слоги");
+  app.click("clear-history");
+  equal(Object.keys(app.stats).length, 0, "очистка истории убирает и счёт по слогам");
 }
 
 // --- Отчёт ---

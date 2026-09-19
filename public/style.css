@@ -962,6 +962,32 @@ dialog p {
   margin: 8px 0 0;
 }
 
+/* Слоги, где чаще нужна помощь: счёт виден взрослому. */
+.hard-syllables {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 7px;
+  margin: 4px 0 2px;
+}
+.hard-syllables span {
+  background: #f6e7dd;
+  border: 1px solid #e6cdbe;
+  border-radius: 10px;
+  padding: 6px 10px;
+  text-align: center;
+}
+.hard-syllables b {
+  display: block;
+  font-family: Arial, sans-serif;
+  font-size: 17px;
+}
+.hard-syllables small {
+  display: block;
+  font-size: 10px;
+  color: var(--muted);
+  margin-top: 2px;
+}
+
 /* Слово по слогам: чередующийся фон показывает границы слияний. */
 .read-word {
   display: flex;

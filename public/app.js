@@ -23,6 +23,8 @@ const initial = { ...CURRICULUM.upTo("С"), length: 6, prompt: "picture", positi
 let storageAvailable = true,
   prefs = { ...initial },
   history = [],
+  /** По слогам: сколько раз встретился и сколько раз понадобилась помощь. */
+  stats = {},
   session = null,
   view = "home";
 
@@ -94,6 +96,21 @@ try {
           )
           .slice(-20)
       : [];
+    // Статистика по слогам: ключ — слог, значение — два целых числа.
+    // Мусор отбрасываем молча, счёт начнётся заново.
+    const saved = data.stats;
+    if (saved && typeof saved === "object")
+      for (const [key, value] of Object.entries(saved).slice(0, 400))
+        if (
+          typeof key === "string" &&
+          key.length === 2 &&
+          Number.isInteger(value?.seen) &&
+          Number.isInteger(value?.help) &&
+          value.seen > 0 &&
+          value.help >= 0 &&
+          value.help <= value.seen
+        )
+          stats[key] = { seen: value.seen, help: value.help };
   }
 } catch {
   storageAvailable = false;
@@ -125,10 +142,38 @@ function plural(n, one, few, many) {
 
 function save() {
   try {
-    localStorage.setItem(STORE, JSON.stringify({ prefs, history }));
+    localStorage.setItem(STORE, JSON.stringify({ prefs, history, stats }));
   } catch {
     storageAvailable = false;
   }
+}
+
+/**
+ * Насколько слог просится в повторение.
+ *
+ * 1 — всегда читался сам, 4 — всегда с помощью. Незнакомый слог получает
+ * 1.4: новый материал должен появляться, но уступать тому, что не даётся.
+ * Вес не отменяет случайность, а смещает её: лёгкие слоги тоже выпадают.
+ */
+function weightOf(key) {
+  const seen = stats[key];
+  if (!seen) return 1.4;
+  return 1 + 3 * (seen.help / seen.seen);
+}
+
+/** Перемешивает список, отдавая предпочтение тому, что даётся труднее. */
+function weightedOrder(list) {
+  const rest = [...list];
+  const out = [];
+  while (rest.length) {
+    let total = 0;
+    for (const item of rest) total += weightOf(item);
+    let point = Math.random() * total;
+    let i = 0;
+    while (i < rest.length - 1 && (point -= weightOf(rest[i])) > 0) i++;
+    out.push(rest.splice(i, 1)[0]);
+  }
+  return out;
 }
 
 /** Есть ли у слова готовый рисунок. Слово без рисунка показывается текстом. */
@@ -278,15 +323,26 @@ function renderHome() {
  * @param {number}   count     сколько кнопок показать, включая правильную
  * @returns {string[]} перемешанный набор из count слогов
  *
- * Сейчас неверные варианты берутся случайно. Насколько трудным получится
- * выбор — решение не техническое: похожие слоги (СА/СУ/СО или СА/МА/РА)
- * заставляют вслушиваться, далёкие позволяют угадать по виду.
+ * Варианты подбираются смешанно: сначала сосед по согласной (СА — СУ),
+ * потом сосед по гласной (СА — МА), остальное случайно. Сосед по согласной
+ * заставляет вслушаться в гласную, сосед по гласной — в согласную,
+ * а далёкий слог вроде ШУ можно угадать по виду карточки, не вслушиваясь.
+ * Если соседей в материале нет, добираем чем есть.
  */
 function pickOptions(target, pool, forbidden, count) {
-  const candidates = pool.filter(
-    (s) => s !== target && !forbidden.includes(s),
-  );
-  return shuffle([target, ...shuffle(candidates).slice(0, count - 1)]);
+  const [consonant, vowel] = target;
+  const free = pool.filter((s) => s !== target && !forbidden.includes(s));
+  const picked = [];
+  const take = (list) => {
+    if (picked.length >= count - 1) return false;
+    const choice = shuffle(list).find((s) => !picked.includes(s));
+    if (choice) picked.push(choice);
+    return Boolean(choice);
+  };
+  take(free.filter((s) => s[0] === consonant));
+  take(free.filter((s) => s[1] === vowel));
+  while (take(free));
+  return shuffle([target, ...picked]);
 }
 
 function start(mode = "mixed") {
@@ -297,9 +353,12 @@ function start(mode = "mixed") {
     mode === "mixed" ? games.map((g) => g.id) : games.some((g) => g.id === mode) ? [mode] : null;
   if (!ids) return;
 
-  // Для каждой игры свой запас подходящих заданий; перемешиваем и выдаём
-  // по кругу, чтобы внутри серии поменьше повторяться.
-  const queues = Object.fromEntries(ids.map((id) => [id, shuffle(p[id])]));
+  // Для каждой игры свой запас подходящих заданий; выдаём по кругу,
+  // чтобы внутри серии поменьше повторяться. Слоги упорядочены с оглядкой
+  // на прошлые занятия, слова для чтения — просто случайно.
+  const queues = Object.fromEntries(
+    ids.map((id) => [id, id === "read" ? shuffle(p[id]) : weightedOrder(p[id])]),
+  );
   const taken = Object.fromEntries(ids.map((id) => [id, 0]));
   const next = (id) => {
     const list = queues[id];
@@ -450,12 +509,20 @@ function finishQuestion(help = false) {
   if (view !== "lesson") return;
   const q = session.queue[session.index];
   if (!adultJudged(q.type) && !session.solved) return;
+  const assisted = help || session.assisted;
   session.results.push({
     target: q.target || q.word.word,
     type: q.type,
-    help: help || session.assisted,
+    help: assisted,
     attempts: session.attempts,
   });
+  if (q.target) {
+    // Копим по слогу, а не по заданию: один и тот же слог встречается
+    // в карточках, в соединении букв и в поиске слога.
+    const seen = (stats[q.target] ||= { seen: 0, help: 0 });
+    seen.seen++;
+    if (assisted) seen.help++;
+  }
   session.index++;
   if (session.index >= session.queue.length) {
     complete(false);
@@ -507,12 +574,27 @@ function complete(partial = false) {
   focusMain();
 }
 
+/**
+ * Слоги, где помощь нужна чаще всего. Меньше двух встреч — рано судить:
+ * одна ошибка может быть просто усталостью.
+ */
+function hardSyllables(limit = 8) {
+  return Object.entries(stats)
+    .filter(([, x]) => x.seen >= 2 && x.help > 0)
+    .sort(
+      (a, b) =>
+        b[1].help / b[1].seen - a[1].help / a[1].seen || b[1].seen - a[1].seen,
+    )
+    .slice(0, limit);
+}
+
 function showAdult() {
   const current = view === "lesson";
   const chosen = CURRICULUM.alphabet.filter(
     (l) => l.tip && prefs.letters.includes(l.id),
   );
   const p = plan();
+  const hard = hardSyllables();
   const letterChip = (l) =>
     `<label class="option"><input type="checkbox" name="letters" value="${l.id}" ${prefs.letters.includes(l.id) ? "checked" : ""}><span class="chip"><b class="letter-mark">${l.id}</b><small>${l.kind === "consonant" ? `${CURRICULUM.syllablesOf(l.id, prefs.vowels).length} слог.` : "без слога"}</small></span></label>`;
   const vowelChip = (l) =>
@@ -530,7 +612,16 @@ function showAdult() {
     .map(letterChip)
     .join(
       "",
-    )}</div></fieldset><fieldset class="setting-group"><legend>Гласные</legend><div class="setting-options compact">${CURRICULUM.vowelLetters.map(vowelChip).join("")}</div><p class="setting-note">Сейчас получается ${p.pool.length} ${plural(p.pool.length, "слог", "слога", "слогов")} и ${p.read.length} ${plural(p.read.length, "слово", "слова", "слов")} для чтения.</p></fieldset><fieldset class="setting-group"><legend>Длина одной серии</legend><div class="setting-options">${LENGTHS.map((n) => `<label class="option"><input type="radio" name="length" value="${n}" ${prefs.length === n ? "checked" : ""}><span>${n} ${n === 3 ? "задания" : "заданий"}</span></label>`).join("")}</div></fieldset><fieldset class="setting-group"><legend>Где искать слог в слове</legend><div class="setting-options"><label class="option"><input type="radio" name="position" value="start" ${prefs.position === "start" ? "checked" : ""}><span>Только в начале</span></label><label class="option"><input type="radio" name="position" value="any" ${prefs.position === "any" ? "checked" : ""}><span>В любом месте</span></label></div><p class="setting-note">«Только в начале» — задания вида СА в слове САНИ. «В любом месте» труднее: слог может оказаться в середине или в конце — МУХА, БУСЫ, МЕШОК.</p></fieldset><fieldset class="setting-group"><legend>Что показывать в этой игре</legend><div class="setting-options"><label class="option"><input type="radio" name="prompt" value="picture" ${prefs.prompt === "picture" ? "checked" : ""}><span>Картинка</span></label><label class="option"><input type="radio" name="prompt" value="word" ${prefs.prompt === "word" ? "checked" : ""}><span>Слово</span></label></div><p class="setting-note">В обоих вариантах слово произносите вы. Ребёнку не нужно читать его целиком. Если рисунка для слова ещё нет, оно покажется текстом.</p></fieldset><div class="parent-guide"><h3>Как помочь прочитать</h3><p>Тяните согласный звук и плавно переходите к гласному, без паузы. Называйте звук, а не букву: «с-с-с», а не «эс». Звуки К, Т, П, Г, Д, Б, Ц и Ч тянуть нельзя — такой слог произносите одним движением.</p><details class="letter-guide"><summary>Подсказки по выбранным буквам (${chosen.length})</summary>${chosen.map((l) => `<p><b>${l.id}</b>${l.sound ? ` — «${l.sound}»` : ""}. ${l.tip}${l.note ? ` ${l.note}` : ""}</p>`).join("")}</details><p>На карточке и в чтении слова послушайте ребёнка и отметьте, получилось ли самостоятельно. В остальных играх достаточно нажимать на большие кнопки — перетаскивать ничего не нужно.</p><p>При усталости нажмите «Пауза». Не обязательно завершать всю серию.</p></div><p class="setting-note">Самостоятельные упражнения для закрепления пройденного. Страницы и иллюстрации букваря здесь не воспроизводятся.</p><div class="save-status" id="save-status" role="status">${current ? "Настройки применятся к следующей серии." : ""}</div><div class="dialog-actions"><button type="submit" class="primary">Сохранить настройки <span aria-hidden="true">✓</span></button><button type="button" class="text-button" data-action="close-adult">Закрыть</button></div></form><div class="history"><h3>Последние занятия</h3>${
+    )}</div></fieldset><fieldset class="setting-group"><legend>Гласные</legend><div class="setting-options compact">${CURRICULUM.vowelLetters.map(vowelChip).join("")}</div><p class="setting-note">Сейчас получается ${p.pool.length} ${plural(p.pool.length, "слог", "слога", "слогов")} и ${p.read.length} ${plural(p.read.length, "слово", "слова", "слов")} для чтения.</p></fieldset><fieldset class="setting-group"><legend>Длина одной серии</legend><div class="setting-options">${LENGTHS.map((n) => `<label class="option"><input type="radio" name="length" value="${n}" ${prefs.length === n ? "checked" : ""}><span>${n} ${n === 3 ? "задания" : "заданий"}</span></label>`).join("")}</div></fieldset><fieldset class="setting-group"><legend>Где искать слог в слове</legend><div class="setting-options"><label class="option"><input type="radio" name="position" value="start" ${prefs.position === "start" ? "checked" : ""}><span>Только в начале</span></label><label class="option"><input type="radio" name="position" value="any" ${prefs.position === "any" ? "checked" : ""}><span>В любом месте</span></label></div><p class="setting-note">«Только в начале» — задания вида СА в слове САНИ. «В любом месте» труднее: слог может оказаться в середине или в конце — МУХА, БУСЫ, МЕШОК.</p></fieldset><fieldset class="setting-group"><legend>Что показывать в этой игре</legend><div class="setting-options"><label class="option"><input type="radio" name="prompt" value="picture" ${prefs.prompt === "picture" ? "checked" : ""}><span>Картинка</span></label><label class="option"><input type="radio" name="prompt" value="word" ${prefs.prompt === "word" ? "checked" : ""}><span>Слово</span></label></div><p class="setting-note">В обоих вариантах слово произносите вы. Ребёнку не нужно читать его целиком. Если рисунка для слова ещё нет, оно покажется текстом.</p></fieldset><div class="parent-guide"><h3>Как помочь прочитать</h3><p>Тяните согласный звук и плавно переходите к гласному, без паузы. Называйте звук, а не букву: «с-с-с», а не «эс». Звуки К, Т, П, Г, Д, Б, Ц и Ч тянуть нельзя — такой слог произносите одним движением.</p><details class="letter-guide"><summary>Подсказки по выбранным буквам (${chosen.length})</summary>${chosen.map((l) => `<p><b>${l.id}</b>${l.sound ? ` — «${l.sound}»` : ""}. ${l.tip}${l.note ? ` ${l.note}` : ""}</p>`).join("")}</details><p>На карточке и в чтении слова послушайте ребёнка и отметьте, получилось ли самостоятельно. В остальных играх достаточно нажимать на большие кнопки — перетаскивать ничего не нужно.</p><p>При усталости нажмите «Пауза». Не обязательно завершать всю серию.</p></div><p class="setting-note">Самостоятельные упражнения для закрепления пройденного. Страницы и иллюстрации букваря здесь не воспроизводятся.</p><div class="save-status" id="save-status" role="status">${current ? "Настройки применятся к следующей серии." : ""}</div><div class="dialog-actions"><button type="submit" class="primary">Сохранить настройки <span aria-hidden="true">✓</span></button><button type="button" class="text-button" data-action="close-adult">Закрыть</button></div></form><div class="history"><h3>Трудные слоги</h3>${
+    hard.length
+      ? `<div class="hard-syllables">${hard
+          .map(
+            ([syllable, x]) =>
+              `<span><b>${syllable}</b><small>помощь ${x.help} из ${x.seen}</small></span>`,
+          )
+          .join("")}</div><p class="setting-note">Эти слоги выпадают в занятиях чаще остальных. Счёт ведётся по слогу, а не по игре: он общий для карточек, соединения букв и поиска слога.</p>`
+      : '<p>Здесь появятся слоги, с которыми чаще нужна помощь. Пока таких нет.</p>'
+  }<h3>Последние занятия</h3>${
     history.length
       ? history
           .slice(-5)
@@ -541,7 +632,7 @@ function showAdult() {
           )
           .join("")
       : "<p>Здесь появятся завершённые задания из ваших серий.</p>"
-  }<p class="setting-note ${!storageAvailable ? "storage-warning" : ""}">${storageAvailable ? "Настройки и результаты хранятся только в этом браузере. На другом устройстве будет своя история." : "Браузер не разрешил сохранение. Настройки действуют до закрытия страницы."}</p>${history.length ? '<button class="text-button" data-action="confirm-clear">Очистить историю</button><div id="clear-confirm" class="confirm-box hidden"><p>Удалить результаты в этом браузере? Настройки останутся.</p><button class="secondary" data-action="clear-history">Удалить историю</button> <button class="text-button" data-action="cancel-clear">Оставить</button></div>' : ""}</div>`;
+  }<p class="setting-note ${!storageAvailable ? "storage-warning" : ""}">${storageAvailable ? "Настройки и результаты хранятся только в этом браузере. На другом устройстве будет своя история." : "Браузер не разрешил сохранение. Настройки действуют до закрытия страницы."}</p>${history.length ? '<button class="text-button" data-action="confirm-clear">Очистить историю</button><div id="clear-confirm" class="confirm-box hidden"><p>Удалить результаты и счёт по слогам в этом браузере? Настройки останутся.</p><button class="secondary" data-action="clear-history">Удалить историю</button> <button class="text-button" data-action="cancel-clear">Оставить</button></div>' : ""}</div>`;
   adultDialog.showModal();
 }
 
@@ -676,6 +767,7 @@ document.addEventListener("click", (e) => {
       break;
     case "clear-history":
       history = [];
+      stats = {};
       save();
       adultDialog.close();
       showAdult();
